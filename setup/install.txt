@@ -1,0 +1,11 @@
+sudo apt update
+sudo apt install uvicorn
+sudo apt install python3-fastapi python3-uvicorn python3-psycopg2 python3-jinja2 python3-matplotlib python3-holidays
+
+# 1. Den Benutzer "planning" mit Passwort "planning" anlegen
+sudo -u postgres createuser planning --pwprompt
+
+# 2. Die Datenbank "planning" anlegen und den User "planning" als Besitzer setzen
+sudo -u postgres createdb -O planning planning
+
+psql -U planning -d planning -f database.sql

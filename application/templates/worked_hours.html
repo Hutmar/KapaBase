@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}Stundenerfassung – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <div>
+      <h1 id="page-title">Stundenerfassung</h1>
+      <div class="text-dim" style="font-size:12px" id="page-subtitle"></div>
+    </div>
+    <button class="btn btn-primary" onclick="openModal()">+ Neuer Eintrag</button>
+  </div>
+
+  <!-- Soll vs. Ist Übersicht -->
+  <div id="summary-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px"></div>
+
+  <!-- Burndown-Chart -->
+  <div style="margin-bottom:20px">
+    <img id="burndown-chart" src="" alt="Burn-Down" style="max-width:100%;border-radius:4px;background:#fff">
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Datum</th>
+        <th>Impl-h</th>
+        <th>Test-h</th>
+        <th>Gesamt</th>
+        <th style="width:80px"></th>
+      </tr>
+    </thead>
+    <tbody id="wh-body"></tbody>
+  </table>
+</div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Neuer Eintrag</div>
+    <div id="modal-alert"></div>
+    <div class="form-row">
+      <label>Datum *</label>
+      <input id="f-day" type="date">
+    </div>
+    <div class="form-row">
+      <label>Impl-Stunden</label>
+      <input id="f-impl" type="number" min="0" value="0">
+    </div>
+    <div class="form-row">
+      <label>Test-Stunden</label>
+      <input id="f-test" type="number" min="0" value="0">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveEntry()">Speichern</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const projectId = {{ project_id }};
+let editingId = null;
+let allEntries = [];
+
+async function loadData() {
+  const data = await api('GET', `/api/worked_hours/${projectId}`);
+  allEntries = data.entries;
+  
+  const proj = data.project; // Die neuen, sauberen Projektdaten
+  const t = data.totals;
+
+  // Titel & Subtitel setzen (Nutzt jetzt immer die echten Projektdaten!)
+  document.getElementById('page-title').textContent = `Stundenerfassung: ${proj.project_name}`;
+  document.getElementById('page-subtitle').textContent =
+    `Soll: ${proj.target_hours}h gesamt | ${proj.plan_impl}h Impl + ${proj.plan_test}h Test`;
+
+  // Soll-Werte direkt aus dem Projekt-Objekt lesen
+  const planImpl  = proj.plan_impl;
+  const planTest  = proj.plan_test;
+  const planTotal = proj.target_hours;
+
+  document.getElementById('summary-row').innerHTML = `
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Soll Impl</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono)">${planImpl}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Ist Impl</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono);color:${t.sum_impl>=planImpl?'var(--accent2)':'var(--accent)'}">${t.sum_impl}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Soll Test</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono)">${planTest}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Ist Test</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono);color:${t.sum_test>=planTest?'var(--accent2)':'var(--accent)'}">${t.sum_test}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Fortschritt</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono)">
+        ${Math.round((t.sum_impl+t.sum_test)/Math.max(planTotal,1)*100)}%
+      </div>
+    </div>
+  `;
+
+  // ... (Der restliche Code für Tabelle und Burndown bleibt gleich)
+  document.getElementById('wh-body').innerHTML = allEntries.map(e => `
+    <tr>
+      <td class="text-mono">${e.day}</td>
+      <td class="text-mono">${e.impl_hours}</td>
+      <td class="text-mono">${e.test_hours}</td>
+      <td class="text-mono">${e.impl_hours + e.test_hours}</td>
+      <td>
+        <div class="flex-gap">
+          <button class="btn btn-ghost btn-xs" onclick="openModal(${e.worked_hours_id})">✎</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteEntry(${e.worked_hours_id})">✕</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+
+  document.getElementById('burndown-chart').src = `/api/charts/burndown/${projectId}?_=${Date.now()}`;
+}
+
+function openModal(id=null) {
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Eintrag bearbeiten' : 'Neuer Eintrag';
+
+  if (id) {
+    const e = allEntries.find(x => x.worked_hours_id === id);
+    document.getElementById('f-day').value  = e.day;
+    document.getElementById('f-impl').value = e.impl_hours;
+    document.getElementById('f-test').value = e.test_hours;
+  } else {
+    document.getElementById('f-day').value  = new Date().toISOString().split('T')[0];
+    document.getElementById('f-impl').value = 0;
+    document.getElementById('f-test').value = 0;
+  }
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveEntry() {
+  const al = document.getElementById('modal-alert');
+  const payload = {
+    project_id: projectId,
+    day:        document.getElementById('f-day').value,
+    impl_hours: parseInt(document.getElementById('f-impl').value)||0,
+    test_hours: parseInt(document.getElementById('f-test').value)||0,
+  };
+  try {
+    if (editingId) await api('PUT',  `/api/worked_hours/${editingId}`, payload);
+    else           await api('POST', '/api/worked_hours/', payload);
+    closeModal();
+    toast('Gespeichert');
+    loadData();
+  } catch(e) {
+    al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+async function deleteEntry(id) {
+  if (!confirm('Eintrag löschen?')) return;
+  try {
+    await api('DELETE', `/api/worked_hours/${id}`);
+    toast('Gelöscht');
+    loadData();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+loadData();
+</script>
+{% endblock %}

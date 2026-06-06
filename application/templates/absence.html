@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Abwesenheiten – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h1>Abwesenheitsverwaltung</h1>
+    <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
+  </div>
+
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+    <label class="text-dim" style="white-space:nowrap">Mitarbeiter:</label>
+    <select id="filter-staff" style="max-width:200px" onchange="loadAbsences()">
+      <option value="">– Alle –</option>
+    </select>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Mitarbeiter</th>
+        <th>Von</th>
+        <th>Bis</th>
+        <th>Typ</th>
+        <th style="width:80px"></th>
+      </tr>
+    </thead>
+    <tbody id="absence-body"></tbody>
+  </table>
+</div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Neue Abwesenheit</div>
+    <div id="modal-alert"></div>
+
+    <div class="form-row">
+      <label>Mitarbeiter *</label>
+      <select id="f-staff"></select>
+    </div>
+    <div class="form-row">
+      <label>Von *</label>
+      <input id="f-from" type="date">
+    </div>
+    <div class="form-row">
+      <label>Bis *</label>
+      <input id="f-to" type="date">
+    </div>
+    <div class="form-row">
+      <label>Typ *</label>
+      <select id="f-type">
+        <option>Urlaub</option>
+        <option>Krank</option>
+        <option>GLAZ</option>
+        <option>Other</option>
+      </select>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveAbsence()">Speichern</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+
+async function init() {
+  const staff = await api('GET', '/api/staff/');
+  const sel = document.getElementById('filter-staff');
+  const fSel = document.getElementById('f-staff');
+  staff.forEach(s => {
+    sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
+    fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
+  });
+  loadAbsences();
+}
+
+async function loadAbsences() {
+  const staff = document.getElementById('filter-staff').value;
+  const url = staff ? `/api/absence/?shortname=${staff}` : '/api/absence/';
+  const rows = await api('GET', url);
+  document.getElementById('absence-body').innerHTML = rows.map(a => `
+    <tr>
+      <td class="text-mono">${a.shortname}</td>
+      <td>${a.absence_from}</td>
+      <td>${a.absence_to}</td>
+      <td><span class="badge" style="background:rgba(74,144,217,0.15);color:#4A90D9">${a.absence_type}</span></td>
+      <td>
+        <div class="flex-gap">
+          <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">✎</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function openModal(id=null) {
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Abwesenheit bearbeiten' : 'Neue Abwesenheit';
+
+  if (id) {
+    const all = await api('GET', '/api/absence/');
+    const a = all.find(x => x.absence_id === id);
+    document.getElementById('f-staff').value = a.shortname;
+    document.getElementById('f-from').value  = a.absence_from;
+    document.getElementById('f-to').value    = a.absence_to;
+    document.getElementById('f-type').value  = a.absence_type;
+    document.getElementById('f-staff').disabled = true;
+  } else {
+    ['f-from','f-to'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('f-type').value = 'Urlaub';
+    document.getElementById('f-staff').disabled = false;
+  }
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveAbsence() {
+  const alert = document.getElementById('modal-alert');
+  const payload = {
+    shortname:    document.getElementById('f-staff').value,
+    absence_from: document.getElementById('f-from').value,
+    absence_to:   document.getElementById('f-to').value,
+    absence_type: document.getElementById('f-type').value,
+  };
+  try {
+    if (editingId) {
+      await api('PUT', `/api/absence/${editingId}`, payload);
+    } else {
+      await api('POST', '/api/absence/', payload);
+    }
+    closeModal();
+    toast('Gespeichert');
+    loadAbsences();
+  } catch(e) {
+    alert.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+async function deleteAbsence(id) {
+  if (!confirm('Abwesenheit wirklich löschen?')) return;
+  try {
+    await api('DELETE', `/api/absence/${id}`);
+    toast('Gelöscht');
+    loadAbsences();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+init();
+</script>
+{% endblock %}

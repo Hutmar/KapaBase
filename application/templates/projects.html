@@ -1,0 +1,401 @@
+{% extends "base.html" %}
+{% block title %}Projekte – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h1>Projektverwaltung</h1>
+    <button class="btn btn-primary" onclick="openModal()">+ Neues Projekt</button>
+  </div>
+
+  <!-- Filter-Zeile -->
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
+    <input id="search" placeholder="🔍 Suche (Name, Kunde, Jira)" style="max-width:240px"
+           oninput="loadProjects()">
+    <label class="flex-gap" style="color:var(--text2)">
+      <input type="checkbox" id="f-planned" style="width:auto" onchange="loadProjects()">
+      Nur geplante
+    </label>
+    <label class="flex-gap" style="color:var(--text2)">
+      <input type="checkbox" id="f-done" style="width:auto" onchange="loadProjects()">
+      Auch erledigte
+    </label>
+    <label class="flex-gap" style="color:var(--text2)">
+      <input type="checkbox" id="show-details" checked style="width:auto" onchange="toggleDetails()">
+      Details anzeigen
+    </label>
+  </div>
+
+  <!-- Kapazitätssummary -->
+  <div id="cap-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
+
+  <!-- Tabelle -->
+  <div style="overflow-x:auto">
+  <table id="proj-table">
+    <thead>
+      <tr>
+        <th>⇅</th>
+        <th onclick="sort('project_name')">Name ⇅</th>
+        <th onclick="sort('customer')">Kunde ⇅</th>
+        <th class="detail-col">Jira</th>
+        <th onclick="sort('target_hours')">Soll-h ⇅</th>
+        <th class="detail-col">Impl-h</th>
+        <th class="detail-col">Test-h</th>
+        <th>Geplant</th>
+        <th class="detail-col">Done</th>
+        <th class="detail-col" onclick="sort('start_date')">Start ⇅</th>
+        <th class="detail-col" onclick="sort('due_date')">Due ⇅</th>
+		<th>Liefertermin</th>
+        <th class="detail-col">Farbe</th>
+        <th>Bemerkung</th>
+        <th style="width:100px"></th>
+      </tr>
+    </thead>
+    <tbody id="proj-body"></tbody>
+    <tfoot id="proj-foot"></tfoot>
+  </table>
+  </div>
+</div>
+
+<!-- Diagramme -->
+<div class="card">
+  <h2>Auslastungsübersicht</h2>
+  <div style="display:flex;gap:20px;flex-wrap:wrap">
+    <img id="chart-bar" src="/api/charts/project_hours_bar" alt="Projekte Stunden"
+         style="max-width:100%;border-radius:4px;background:#fff">
+    <img id="chart-cap" src="/api/charts/capacity_per_week" alt="Kapazität/KW"
+         style="max-width:100%;border-radius:4px;background:#fff">
+  </div>
+</div>
+
+<!-- Modal Projekt -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" style="width:min(600px,95vw)">
+    <div class="modal-title" id="modal-title">Neues Projekt</div>
+    <div id="modal-alert"></div>
+
+    <div class="form-row">
+      <label>Name *</label>
+      <input id="f-name">
+    </div>
+    <div class="form-row">
+      <label>Kunde *</label>
+      <input id="f-customer">
+    </div>
+    <div class="form-row">
+      <label>Jira-ID</label>
+      <input id="f-jira">
+    </div>
+    <div class="form-row">
+      <label>Soll-Stunden *</label>
+      <input id="f-target" type="number" min="1" oninput="validateHours()">
+    </div>
+    <div class="form-row">
+      <label>Impl-Stunden *</label>
+      <input id="f-impl" type="number" min="0" oninput="validateHours()">
+    </div>
+    <div class="form-row">
+      <label>Test-Stunden *</label>
+      <input id="f-test" type="number" min="0" oninput="validateHours()">
+    </div>
+    <div id="hours-warning" class="alert alert-error hidden">Impl + Test ≠ Soll-Stunden</div>
+
+    <div class="form-row">
+      <label>Geplant</label>
+      <input id="f-planned" type="checkbox" style="width:auto" checked>
+    </div>
+    <div class="form-row">
+      <label>Erledigt</label>
+      <input id="f-done" type="checkbox" style="width:auto">
+    </div>
+    <div class="form-row">
+      <label>Start-Datum</label>
+      <input id="f-start" type="date">
+    </div>
+    <div class="form-row">
+      <label>Due-Datum</label>
+      <input id="f-due" type="date">
+    </div>
+    <div class="form-row">
+      <label>Farbe *</label>
+      <div class="flex-gap">
+        <input id="f-color" type="color" style="width:60px">
+        <span id="f-color-hex" class="text-mono" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Bemerkung</label>
+      <textarea id="f-remarks" rows="2"></textarea>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveProject()">Speichern</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+let sortField = 'sort_order';
+let sortDir = 1;
+let allProjects = [];
+
+// Farb-Sync
+document.getElementById('f-color')?.addEventListener('input', function() {
+  document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
+});
+
+function validateHours() {
+  const t = parseInt(document.getElementById('f-target').value||0);
+  const i = parseInt(document.getElementById('f-impl').value||0);
+  const x = parseInt(document.getElementById('f-test').value||0);
+  document.getElementById('hours-warning').classList.toggle('hidden', t===0 || i+x===t);
+}
+
+function toggleDetails() {
+  const show = document.getElementById('show-details').checked;
+  document.querySelectorAll('.detail-col').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+async function loadProjects() {
+  const search  = document.getElementById('search').value.trim();
+  const planned = document.getElementById('f-planned').checked;
+  const done    = document.getElementById('f-done').checked;
+
+  // Nutze URLSearchParams, um die Query-Parameter sauber zu bauen
+  const params = new URLSearchParams();
+  
+  // Wenn "Nur geplante" aktiv ist, filtere nach true
+  if (planned) {
+    params.append('planned', 'true');
+  }
+  
+  // Wenn "Auch erledigte" NICHT aktiv ist, filtere nach done=false
+  if (!done) {
+    params.append('done', 'false');
+  }
+  
+  if (search) {
+    params.append('search', search);
+  }
+
+  const url = `/api/projects/?${params.toString()}`;
+
+  try {
+    const data = await api('GET', url);
+    allProjects = data.projects;
+    renderProjects(allProjects);
+    renderCapSummary(data);
+    toggleDetails();
+  } catch (e) {
+    console.error("Fehler beim Laden der Projekte:", e);
+  }
+}
+
+function sort(field) {
+  if (sortField === field) sortDir *= -1;
+  else { sortField = field; sortDir = 1; }
+  const sorted = [...allProjects].sort((a,b) => {
+    const av = a[field]||'', bv = b[field]||'';
+    return av < bv ? -sortDir : av > bv ? sortDir : 0;
+  });
+  renderProjects(sorted);
+}
+
+function getWeekNumber(dateStr) {
+  if (!dateStr) return '–';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '–';
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 4 - (d.getDay() || 7));
+  const startOfYear = new Date(d.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((((d - startOfYear) / 86400000) + 1) / 7);
+  return 'KW ' + weekNo;
+}
+
+function renderProjects(projects) {
+  const tbody = document.getElementById('proj-body');
+  tbody.innerHTML = projects.map((p, i) => `
+    <tr draggable="true" data-id="${p.project_id}" data-order="${i}"
+        ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)">
+      <td style="color:var(--text2);cursor:grab">⠿</td>
+      <td>
+        <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
+        <strong>${p.project_name}</strong>
+      </td>
+      <td>${p.customer}</td>
+      <td class="detail-col text-dim">${p.jira_id||''}</td>
+      <td class="text-mono">${p.target_hours}</td>
+      <td class="detail-col text-mono">${p.impl_hours}</td>
+      <td class="detail-col text-mono">${p.test_hours}</td>
+      <td><input type="checkbox" ${p.planned?'checked':''} onchange="quickUpdate(${p.project_id},'planned',this.checked)" style="width:auto"></td>
+      <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
+      <td class="detail-col" class="text-dim nowrap">${p.start_date||'–'}</td>
+      <td class="detail-col" class="text-dim nowrap">${p.due_date||'–'}</td>
+	  <td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
+      <td class="detail-col">
+        <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
+        <span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
+      </td>
+      <td class="text-dim" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${p.remarks||''}</td>
+      <td>
+        <div class="flex-gap">
+          <a href="/worked_hours/${p.project_id}" class="btn btn-ghost btn-xs" title="Stundenerfassung">⏱</a>
+          <button class="btn btn-ghost btn-xs" onclick="openModal(${p.project_id})">✎</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteProject(${p.project_id})">✕</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function renderCapSummary(data) {
+  const cap = data.capacity;
+  const diff = cap.diff;
+  const diffColor = diff > 0 ? 'var(--danger)' : 'var(--accent2)';
+
+  document.getElementById('cap-summary').innerHTML = `
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Geplante Stunden</div>
+      <div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${data.sum_target_hours}</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Verfügbare Kapazität</div>
+      <div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${Math.round(cap.total_capacity_hours)}</div>
+      ${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.period_start} – ${cap.period_end}</div>` : ''}
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto;border-color:${diff>0?'var(--danger)':'var(--accent2)'}">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Differenz</div>
+      <div style="font-size:20px;font-weight:600;font-family:var(--font-mono);color:${diffColor}">${diff > 0 ? '-' : '+'}${Math.abs(Math.round(diff))}</div>
+    </div>
+  `;
+}
+
+async function quickUpdate(id, field, val) {
+  try {
+    await api('PUT', `/api/projects/${id}`, {[field]: val});
+    loadProjects();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function openModal(id=null) {
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Projekt bearbeiten' : 'Neues Projekt';
+
+  if (id) {
+    const p = allProjects.find(x => x.project_id === id) || await api('GET', `/api/projects/${id}`);
+    document.getElementById('f-name').value    = p.project_name;
+    document.getElementById('f-customer').value= p.customer;
+    document.getElementById('f-jira').value    = p.jira_id||'';
+    document.getElementById('f-target').value  = p.target_hours;
+    document.getElementById('f-impl').value    = p.impl_hours;
+    document.getElementById('f-test').value    = p.test_hours;
+    document.getElementById('f-planned').checked= p.planned;
+    document.getElementById('f-done').checked  = p.done;
+    document.getElementById('f-start').value   = p.start_date||'';
+    document.getElementById('f-due').value     = p.due_date||'';
+    document.getElementById('f-color').value   = p.color_hexcode||'#4A90D9';
+    document.getElementById('f-color-hex').textContent = (p.color_hexcode||'').toUpperCase();
+    document.getElementById('f-remarks').value = p.remarks||'';
+  } else {
+    const data = await api('GET', '/api/projects/');
+    const suggestedColor = data.suggested_color || '#4A90D9';
+    ['f-name','f-customer','f-jira','f-target','f-impl','f-test','f-start','f-due','f-remarks']
+      .forEach(id=>document.getElementById(id).value='');
+    document.getElementById('f-planned').checked = true;
+    document.getElementById('f-done').checked    = false;
+    document.getElementById('f-color').value     = suggestedColor;
+    document.getElementById('f-color-hex').textContent = suggestedColor.toUpperCase();
+  }
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveProject() {
+  const al = document.getElementById('modal-alert');
+  const payload = {
+    project_name: document.getElementById('f-name').value.trim(),
+    customer:     document.getElementById('f-customer').value.trim(),
+    jira_id:      document.getElementById('f-jira').value.trim()||null,
+    target_hours: parseInt(document.getElementById('f-target').value),
+    impl_hours:   parseInt(document.getElementById('f-impl').value),
+    test_hours:   parseInt(document.getElementById('f-test').value),
+    planned:      document.getElementById('f-planned').checked,
+    done:         document.getElementById('f-done').checked,
+    start_date:   document.getElementById('f-start').value||null,
+    due_date:     document.getElementById('f-due').value||null,
+    color_hexcode:document.getElementById('f-color').value,
+    remarks:      document.getElementById('f-remarks').value.trim()||null,
+  };
+  try {
+    if (editingId) await api('PUT', `/api/projects/${editingId}`, payload);
+    else           await api('POST', '/api/projects/', payload);
+    closeModal();
+    toast('Gespeichert');
+    loadProjects();
+    refreshCharts();
+  } catch(e) {
+    al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+async function deleteProject(id) {
+  if (!confirm('Projekt wirklich löschen?')) return;
+  try {
+    await api('DELETE', `/api/projects/${id}`);
+    toast('Gelöscht');
+    loadProjects();
+    refreshCharts();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+function refreshCharts() {
+  const ts = Date.now();
+  document.getElementById('chart-bar').src = `/api/charts/project_hours_bar?_=${ts}`;
+  document.getElementById('chart-cap').src = `/api/charts/capacity_per_week?_=${ts}`;
+}
+
+// ── Drag & Drop für Sortierung ─────────────────────────────────────────────────
+let dragSrcId = null;
+
+function dragStart(e) {
+  dragSrcId = parseInt(e.currentTarget.dataset.id);
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function dragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
+
+async function drop(e) {
+  e.preventDefault();
+  const targetId = parseInt(e.currentTarget.dataset.id);
+  if (dragSrcId === targetId) return;
+
+  // Neue Reihenfolge berechnen
+  const ids = [...document.querySelectorAll('#proj-body tr')].map(r => parseInt(r.dataset.id));
+  const srcIdx = ids.indexOf(dragSrcId);
+  const tgtIdx = ids.indexOf(targetId);
+  ids.splice(srcIdx, 1);
+  ids.splice(tgtIdx, 0, dragSrcId);
+
+  const order = ids.map((id, i) => ({project_id: id, sort_order: i}));
+  try {
+    await api('PUT', '/api/projects/reorder/bulk', order);
+    loadProjects();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+loadProjects();
+</script>
+{% endblock %}

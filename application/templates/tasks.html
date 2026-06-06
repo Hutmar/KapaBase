@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+{% block title %}Tasks – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h1>Task-Verwaltung</h1>
+    <button class="btn btn-primary" onclick="openModal()">+ Neuer Task</button>
+  </div>
+
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+    <label class="text-dim">Projekt:</label>
+    <select id="filter-proj" style="max-width:240px" onchange="loadTasks()">
+      <option value="">– Alle –</option>
+    </select>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Task</th>
+        <th>Projekt</th>
+        <th>Farbe</th>
+        <th style="width:80px"></th>
+      </tr>
+    </thead>
+    <tbody id="tasks-body"></tbody>
+  </table>
+</div>
+
+<!-- Modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <div class="modal-title" id="modal-title">Neuer Task</div>
+    <div id="modal-alert"></div>
+
+    <div class="form-row">
+      <label>Name *</label>
+      <input id="f-name">
+    </div>
+    <div class="form-row">
+      <label>Projekt</label>
+      <select id="f-project">
+        <option value="">– kein Projekt –</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Farbe</label>
+      <div class="flex-gap">
+        <input id="f-color" type="color" style="width:60px">
+        <span id="f-color-hex" class="text-mono" style="font-size:12px;color:var(--text2)"></span>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveTask()">Speichern</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+let allTasks = [];
+
+document.getElementById('f-color')?.addEventListener('input', function() {
+  document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
+});
+
+async function init() {
+  const projData = await api('GET', '/api/projects/?done=false');
+  const projects = projData.projects;
+
+  const filterSel = document.getElementById('filter-proj');
+  const fSel = document.getElementById('f-project');
+
+  projects.forEach(p => {
+    filterSel.innerHTML += `<option value="${p.project_id}">${p.project_name}</option>`;
+    fSel.innerHTML      += `<option value="${p.project_id}">${p.project_name}</option>`;
+  });
+
+  loadTasks();
+}
+
+async function loadTasks() {
+  const pid = document.getElementById('filter-proj').value;
+  const url = pid ? `/api/tasks/?project_id=${pid}` : '/api/tasks/';
+  const data = await api('GET', url);
+  allTasks = data.tasks;
+
+  document.getElementById('tasks-body').innerHTML = allTasks.map(t => `
+    <tr>
+      <td>
+        <span class="color-dot" style="background:${t.color_hexcode||'#555'}"></span>
+        ${t.task_name}
+      </td>
+      <td class="text-dim">${t.project_name||'–'}</td>
+      <td>
+        <span class="text-mono" style="font-size:11px">${t.color_hexcode||'–'}</span>
+      </td>
+      <td>
+        <div class="flex-gap">
+          <button class="btn btn-ghost btn-xs" onclick="openModal(${t.task_id})">✎</button>
+          <button class="btn btn-danger btn-xs" onclick="deleteTask(${t.task_id})">✕</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function openModal(id=null) {
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Task bearbeiten' : 'Neuer Task';
+
+  if (id) {
+    const t = allTasks.find(x => x.task_id === id);
+    document.getElementById('f-name').value    = t.task_name;
+    document.getElementById('f-project').value = t.project_id||'';
+    document.getElementById('f-color').value   = t.color_hexcode||'#F0A500';
+    document.getElementById('f-color-hex').textContent = (t.color_hexcode||'').toUpperCase();
+  } else {
+    const data = await api('GET', '/api/tasks/');
+    document.getElementById('f-name').value    = '';
+    document.getElementById('f-project').value = '';
+    document.getElementById('f-color').value   = data.suggested_color||'#F0A500';
+    document.getElementById('f-color-hex').textContent = (data.suggested_color||'').toUpperCase();
+  }
+  document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveTask() {
+  const al = document.getElementById('modal-alert');
+  const projVal = document.getElementById('f-project').value;
+  const payload = {
+    task_name:    document.getElementById('f-name').value.trim(),
+    project_id:   projVal ? parseInt(projVal) : null,
+    color_hexcode:document.getElementById('f-color').value,
+  };
+  try {
+    if (editingId) await api('PUT', `/api/tasks/${editingId}`, payload);
+    else           await api('POST', '/api/tasks/', payload);
+    closeModal();
+    toast('Gespeichert');
+    loadTasks();
+  } catch(e) {
+    al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+async function deleteTask(id) {
+  if (!confirm('Task wirklich löschen?')) return;
+  try {
+    await api('DELETE', `/api/tasks/${id}`);
+    toast('Gelöscht');
+    loadTasks();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+init();
+</script>
+{% endblock %}
