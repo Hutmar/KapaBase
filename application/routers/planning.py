@@ -202,14 +202,17 @@ def get_planning(
         plannings_raw = [dict(r) for r in cur.fetchall()]
 
         # ── Verfügbare Projekte (Drag&Drop) ────────────────────────────────
-        # Filter: wenn end_week gesetzt, nur Projekte deren start_date vor dem
-        # Montag der gewählten KW liegt. Sortierung: due_date ASC.
+        # Nur Projekte OHNE Tasks anzeigen (Projekte mit Tasks werden über Tasks geplant)
+        # Sortierung: due_date ASC
         cur.execute("""
-            SELECT project_id, project_name, customer, color_hexcode,
-                   start_date, due_date, target_hours, impl_hours, test_hours
-            FROM project
-            WHERE planned = TRUE AND done = FALSE
-            ORDER BY due_date ASC NULLS LAST, project_name ASC
+            SELECT p.project_id, p.project_name, p.customer, p.color_hexcode,
+                   p.start_date, p.due_date, p.target_hours, p.impl_hours, p.test_hours
+            FROM project p
+            WHERE p.planned = TRUE AND p.done = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM tasks t WHERE t.project_id = p.project_id
+              )
+            ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
         """)
         all_projects = cur.fetchall()
 
@@ -285,12 +288,16 @@ def get_planning(
             "week_hours": week_hours,
         }
 
-    # ── end_week-Filter für available_projects ───────────────────────────────
-    # Wenn end_week gesetzt: nur Projekte anzeigen deren start_date vor dem
-    # Montag dieser KW liegt (d.h. bereits laufende / bald startende Projekte)
+    # ── end_week: Enddatum der sichtbaren Matrix begrenzen ──────────────────
+    # Wenn end_week gesetzt: Matrix nur bis zu dieser KW anzeigen UND
+    # available_projects auf Projekte filtern deren start_date VOR dem
+    # Montag dieser KW liegt.
     if end_week:
-        ew_parts = end_week.split("-W")
+        ew_parts  = end_week.split("-W")
         ew_monday = date.fromisocalendar(int(ew_parts[0]), int(ew_parts[1]), 1)
+        # Wochen auf Zeitraum bis end_week kürzen
+        weeks = [wk for wk in weeks if wk <= end_week]
+        # Projekte filtern
         available_projects = [
             p for p in all_projects
             if p["start_date"] is not None and p["start_date"] < ew_monday
@@ -425,6 +432,9 @@ def project_planning_status():
                    p.due_date, p.color_hexcode
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
+              AND NOT EXISTS (
+                  SELECT 1 FROM tasks t WHERE t.project_id = p.project_id
+              )
             ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
         """)
         projects = cur.fetchall()

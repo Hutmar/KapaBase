@@ -3,37 +3,26 @@
 
 {% block content %}
 <style>
-  /* ── Zwei-Tabellen-Ansatz: fixierter Header + scrollbarer Body ─────────── */
-
-  /* Wrapper für den Header: sticky unter der Navbar, kein eigener Scroll */
   #planning-header-wrap {
     position: sticky;
     top: 52px;
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
-    overflow-x: hidden;  /* scrollLeft per JS gesetzt; visuell kein Scrollbar */
+    overflow-x: hidden;
   }
-
-  /* Body-Wrapper scrollt horizontal */
   #planning-body-wrap {
     overflow-x: auto;
     margin-bottom: 24px;
   }
-
-  /* Beide Tabellen: auto layout, Breiten kommen aus colgroup */
   .planning-header-table,
   .planning-body-table {
     border-collapse: separate;
     border-spacing: 0;
     font-size: 12px;
-    /* table-layout auto: Zellen bestimmen Breite selbst */
     table-layout: auto;
-    /* min-width verhindert Kollaps bei wenig Inhalt */
     min-width: max-content;
   }
-
-  /* Monatszeile */
   .planning-header-table tr.month-row th {
     background: var(--bg2);
     font-size: 11px;
@@ -47,13 +36,10 @@
     border-bottom: 1px solid var(--border);
     box-sizing: border-box;
   }
-
   .planning-header-table tr.month-row th.staff-col {
     text-align: left;
     border-bottom: none;
   }
-
-  /* KW-Zeile */
   .planning-header-table tr.kw-row th {
     background: var(--bg3);
     font-size: 10px;
@@ -63,21 +49,17 @@
     padding: 0 8px;
     text-align: center;
     white-space: nowrap;
-    min-width: 82px;
+    min-width: 90px;
     box-sizing: border-box;
   }
-
   .planning-header-table tr.kw-row th.staff-col {
     min-width: 150px;
     text-align: left;
   }
-
   .kw-header-current {
     color: var(--accent) !important;
     border-bottom: 2px solid var(--accent) !important;
   }
-
-  /* Body-Tabelle: sticky erste Spalte */
   .planning-body-table td.staff-name {
     position: sticky;
     left: 0;
@@ -90,11 +72,10 @@
     min-width: 150px;
     box-sizing: border-box;
   }
-
   .planning-body-table td {
     padding: 3px 4px;
     border: 1px solid rgba(42,48,80,0.3);
-    min-width: 82px;
+    min-width: 90px;
     height: 36px;
     vertical-align: middle;
     text-align: center;
@@ -102,14 +83,12 @@
     position: relative;
     box-sizing: border-box;
   }
-
   .planning-body-table td.droptarget { cursor: copy; }
   .planning-body-table td.droptarget:hover {
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
-
-  /* ── Abwesenheit ──────────────────────────────────────────────────────── */
+  /* Abwesenheit / Vergangenheit / gesperrt */
   .absent-cell {
     background: repeating-linear-gradient(
       -45deg,
@@ -120,7 +99,17 @@
     color: var(--text2);
     font-size: 10px;
   }
-
+  .past-cell {
+    background: repeating-linear-gradient(
+      -45deg,
+      rgba(30,35,54,0.7), rgba(30,35,54,0.7) 4px,
+      rgba(20,24,40,0.7) 4px, rgba(20,24,40,0.7) 8px
+    ) !important;
+    cursor: not-allowed !important;
+    color: var(--text2);
+    font-size: 10px;
+    opacity: 0.6;
+  }
   .partial-absent-cell {
     background: repeating-linear-gradient(
       -45deg,
@@ -128,8 +117,7 @@
       transparent 4px, transparent 8px
     );
   }
-
-  /* ── Planungs-Chip ────────────────────────────────────────────────────── */
+  /* Planungs-Chip */
   .planning-cell {
     display: inline-flex;
     align-items: center;
@@ -141,13 +129,12 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 74px;
+    max-width: 82px;
     height: 26px;
     user-select: none;
     position: relative;
     vertical-align: middle;
   }
-
   .planning-cell .remove-btn {
     display: none;
     position: absolute;
@@ -165,10 +152,13 @@
     z-index: 3;
     padding: 0;
   }
-
   .planning-body-table td:hover .remove-btn { display: flex; }
-
-  /* ── Kapazitäts-Summen-Zeile ──────────────────────────────────────────── */
+  .planning-cell.outdated {
+    opacity: 0.45;
+    text-decoration: line-through;
+    filter: grayscale(60%);
+  }
+  /* Kapazitäts-Summen-Zeile */
   .cap-row td {
     background: var(--bg3);
     font-family: var(--font-mono);
@@ -178,8 +168,7 @@
     font-weight: 600;
     border-top: 2px solid var(--border);
   }
-
-  /* ── Drag-Quellen ─────────────────────────────────────────────────────── */
+  /* Drag-Quellen */
   .drag-source {
     display: flex;
     align-items: center;
@@ -193,14 +182,24 @@
     user-select: none;
     transition: border-color 0.12s, background 0.12s;
   }
-
   .drag-source:hover  { border-color: var(--accent); background: var(--bg3); }
   .drag-source:active { cursor: grabbing; opacity: 0.65; }
   .drag-source .dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-
-  /* ── Status-Tabelle ───────────────────────────────────────────────────── */
+  /* Einklappbare Sektionen */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0 8px 0;
+  }
+  .section-header:hover h2 { color: var(--accent); }
+  .section-toggle { font-size: 11px; color: var(--text2); transition: transform 0.15s; }
+  .section-toggle.collapsed { transform: rotate(-90deg); }
+  .section-body { overflow: hidden; transition: max-height 0.2s ease; }
+  /* Status-Tabelle */
   .proj-status-table td { padding: 6px 10px; font-size: 12px; }
-
   .status-pill {
     display: inline-block;
     padding: 2px 8px;
@@ -209,13 +208,31 @@
     font-weight: 600;
     font-family: var(--font-mono);
   }
-
-  /* Veraltete Planungseinträge (neuere worked_hours vorhanden) */
-  .planning-cell.outdated {
-    opacity: 0.45;
-    text-decoration: line-through;
-    filter: grayscale(60%);
+  /* Click-Zuweisung Dropdown */
+  .cell-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 180px;
+    max-height: 220px;
+    overflow-y: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
   }
+  .cell-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(42,48,80,0.3);
+  }
+  .cell-dropdown-item:hover { background: var(--bg3); }
+  .cell-dropdown-item:last-child { border-bottom: none; }
 </style>
 
 <!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
@@ -224,7 +241,7 @@
     <h1>Ressourcenplanung</h1>
     <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
       <label class="flex-gap text-dim" style="font-size:12px">
-        <input type="checkbox" id="use-current-week" style="width:auto" onchange="loadPlanning()">
+        <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadPlanning()">
         Ab aktueller KW starten
       </label>
       <label class="flex-gap text-dim" style="font-size:12px">
@@ -238,14 +255,11 @@
     </div>
   </div>
 
-  <!-- Fixierter Header (sticky, kein overflow) -->
   <div id="planning-header-wrap">
     <table class="planning-header-table" id="planning-header-table">
       <thead id="planning-thead"></thead>
     </table>
   </div>
-
-  <!-- Scrollbarer Body -->
   <div id="planning-body-wrap">
     <table class="planning-body-table" id="planning-body-table">
       <tbody id="planning-tbody"></tbody>
@@ -254,21 +268,32 @@
 </div>
 
 <!-- ── Drag-Quellen + Projektstatus ──────────────────────────────────────── -->
-<div style="display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start">
+<div style="display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start;margin-top:20px">
 
-  <!-- Linke Spalte: Projekte und Tasks zum Ziehen -->
   <div>
+    <!-- Tasks (einklappbar) -->
     <div class="card">
-      <h2>Projekte</h2>
-      <div id="proj-drag-list"></div>
+      <div class="section-header" onclick="toggleSection('task-section','task-toggle')">
+        <h2>Tasks</h2>
+        <span class="section-toggle" id="task-toggle">▼</span>
+      </div>
+      <div class="section-body" id="task-section">
+        <div id="task-drag-list"></div>
+      </div>
     </div>
+    <!-- Projekte (einklappbar) -->
     <div class="card">
-      <h2>Tasks</h2>
-      <div id="task-drag-list"></div>
+      <div class="section-header" onclick="toggleSection('proj-section','proj-toggle')">
+        <h2>Projekte</h2>
+        <span class="section-toggle" id="proj-toggle">▼</span>
+      </div>
+      <div class="section-body" id="proj-section">
+        <div id="proj-drag-list"></div>
+      </div>
     </div>
   </div>
 
-  <!-- Rechte Spalte: Planungsstatus -->
+  <!-- Planungsstatus -->
   <div class="card">
     <h2>Planungsstatus</h2>
     <div style="overflow-x:auto">
@@ -291,17 +316,18 @@
   </div>
 </div>
 
-<!-- ── Zuordnungs-Modal (Rollenauswahl) ──────────────────────────────────── -->
+<!-- Klick-Zuweisung Dropdown (global, wird per JS positioniert) -->
+<div id="cell-dropdown" class="cell-dropdown" style="display:none"></div>
+
+<!-- Zuordnungs-Modal (Rollenauswahl – nur noch für Tasks nötig falls beide Rollen) -->
 <div class="modal-backdrop" id="assign-modal">
   <div class="modal" style="width:min(360px,95vw)">
     <div class="modal-title">Zuweisung</div>
     <div id="assign-info" style="font-size:13px;color:var(--text2);margin-bottom:16px"></div>
-
     <div class="form-row">
       <label>Rolle</label>
       <select id="assign-role"></select>
     </div>
-
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeAssignModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="confirmAssign()">Zuweisen</button>
@@ -313,18 +339,50 @@
 {% block scripts %}
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
-let planningData  = null;
-let dragPayload   = null;   // {type, id, name, color}
-let assignTarget  = null;   // {staff, staffRoles, weekKey}
+let planningData = null;
+let dragPayload  = null;   // {type, id, name, color}
+let assignTarget = null;   // für Modal-Rollenauswahl
+let openDropdownCell = null; // aktuell geöffnete Zelle für Click-Dropdown
 
-// ── Monatsnamen ────────────────────────────────────────────────────────────────
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+// ── Einklapp-Zustand (Session-persistent via JS-Variable) ─────────────────────
+// true = offen, false = eingeklappt; Default: offen
+const sectionState = { 'proj-section': true, 'task-section': true };
+
+function toggleSection(sectionId, toggleId) {
+  const sec  = document.getElementById(sectionId);
+  const tog  = document.getElementById(toggleId);
+  const open = !sectionState[sectionId];   // umschalten
+  sectionState[sectionId] = open;
+  applySectionState(sectionId, toggleId);
+}
+
+function applySectionState(sectionId, toggleId) {
+  const sec  = document.getElementById(sectionId);
+  const tog  = document.getElementById(toggleId);
+  if (!sec || !tog) return;
+  if (sectionState[sectionId]) {
+    sec.style.maxHeight = sec.scrollHeight + 500 + 'px';
+    tog.classList.remove('collapsed');
+  } else {
+    sec.style.maxHeight = '0px';
+    tog.classList.add('collapsed');
+  }
+}
+
+// Nach jedem Render: Zustände anwenden (ohne den Zustand zu verändern)
+function initSections() {
+  applySectionState('proj-section', 'proj-toggle');
+  applySectionState('task-section', 'task-toggle');
+}
 
 // ── Daten laden ────────────────────────────────────────────────────────────────
 async function loadPlanning() {
   const useCurrent = document.getElementById('use-current-week').checked;
   const useEndWeek = document.getElementById('use-end-week').checked;
-  const endWeekVal = useEndWeek ? document.getElementById('end-week-select').value : '';
+  const endWeekVal = (useEndWeek && document.getElementById('end-week-select').value)
+                     ? document.getElementById('end-week-select').value : '';
 
   let url = `/api/planning/?use_current_week=${useCurrent}`;
   if (endWeekVal) url += `&end_week=${encodeURIComponent(endWeekVal)}`;
@@ -332,57 +390,91 @@ async function loadPlanning() {
   try {
     planningData = await api('GET', url);
   } catch(e) {
-    toast('Fehler beim Laden der Planungsdaten: ' + e.message, 'error');
-    console.error('loadPlanning error:', e);
+    toast('Fehler beim Laden: ' + e.message, 'error');
+    console.error(e);
     return;
   }
 
-  // Dropdown mit den geladenen KW befüllen (beim ersten Laden und nach Änderung)
-  populateEndWeekDropdown(planningData.weeks, endWeekVal);
+  // Dropdown immer mit allen KW aus der ungefilterten Basis befüllen.
+  // Dafür einmalig alle KW ohne end_week-Filter laden wenn noch nicht vorhanden.
+  await ensureEndWeekDropdown(endWeekVal);
 
-  try {
-    renderMatrix();
-  } catch(e) {
-    toast('Fehler beim Rendern der Matrix: ' + e.message, 'error');
-    console.error('renderMatrix error:', e);
-    return;
-  }
+  try { renderMatrix(); }
+  catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); return; }
+
   renderDragSources();
   loadProjectStatus();
+  setTimeout(initSections, 50);
+}
+
+// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Beschränkung)
+let _allWeeks = null;
+async function ensureEndWeekDropdown(selectedVal) {
+  if (!_allWeeks || _allWeeks.length === 0) {
+    // Einmalig alle KW holen (ohne end_week-Filter)
+    const useCurrent = document.getElementById('use-current-week').checked;
+    try {
+      const base = await api('GET', `/api/planning/?use_current_week=${useCurrent}`);
+      _allWeeks = base.weeks || [];
+    } catch(e) {
+      _allWeeks = planningData.weeks || [];
+    }
+  }
+  populateEndWeekDropdown(_allWeeks, selectedVal);
 }
 
 function toggleEndWeek() {
   const cb  = document.getElementById('use-end-week');
   const sel = document.getElementById('end-week-select');
   sel.disabled = !cb.checked;
-  if (!cb.checked) sel.value = '';
+  if (!cb.checked) {
+    sel.value = '';
+    _allWeeks = null; // reset so dropdown is refreshed
+  }
   loadPlanning();
 }
 
-// Dropdown mit KW-Optionen befüllen
 function populateEndWeekDropdown(weeks, currentVal) {
   const sel = document.getElementById('end-week-select');
-  const prev = currentVal || sel.value;
+  const prev = currentVal || sel.value || '';
   sel.innerHTML = '<option value="">– wählen –</option>';
   (weeks || []).forEach(wk => {
     const kwNum = parseInt(wk.split('-W')[1]);
-    const opt = document.createElement('option');
-    opt.value = wk;
+    const opt   = document.createElement('option');
+    opt.value       = wk;
     opt.textContent = `KW ${kwNum}`;
     if (wk === prev) opt.selected = true;
     sel.appendChild(opt);
   });
 }
 
-// ── Hilfsfunktion: ISO-Montag aus 'YYYY-WNN' ──────────────────────────────────
+// ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
 function weekMonday(weekKey) {
   const [yearStr, wStr] = weekKey.split('-W');
   const year = parseInt(yearStr), week = parseInt(wStr);
-  // ISO 8601: Montag der KW
-  const jan4 = new Date(Date.UTC(year, 0, 4));          // 4. Jan liegt immer in KW1
-  const jan4day = jan4.getUTCDay() || 7;                // 1=Mo … 7=So
-  const kw1monday = new Date(jan4.getTime() - (jan4day - 1) * 86400000);
-  return new Date(kw1monday.getTime() + (week - 1) * 7 * 86400000);
+  const jan4    = new Date(Date.UTC(year, 0, 4));
+  const jan4day = jan4.getUTCDay() || 7;
+  const kw1mon  = new Date(jan4.getTime() - (jan4day - 1) * 86400000);
+  return new Date(kw1mon.getTime() + (week - 1) * 7 * 86400000);
+}
+
+function weekFriday(weekKey) {
+  const mon = weekMonday(weekKey);
+  return new Date(mon.getTime() + 4 * 86400000);
+}
+
+function fmtDate(d) {
+  return `${d.getUTCDate()}.${d.getUTCMonth()+1}.`;
+}
+
+function getIsoWeek(d) {
+  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+  const y1 = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  return {
+    year: utc.getUTCFullYear(),
+    week: Math.ceil((((utc - y1) / 86400000) + 1) / 7),
+  };
 }
 
 // ── Matrix rendern ─────────────────────────────────────────────────────────────
@@ -394,17 +486,15 @@ function renderMatrix() {
   const todayIso = getIsoWeek(today);
   const currentWk = `${todayIso.year}-W${String(todayIso.week).padStart(2,'0')}`;
 
-  // Feste Spaltenbreiten – erste Spalte breiter, KW-Spalten einheitlich
-  const COL_STAFF = 160;   // px: Mitarbeiter-Spalte
-  const COL_KW    = 90;    // px: jede KW-Spalte
+  const COL_STAFF = 160;
+  const COL_KW    = 90;
 
-  // colgroup-HTML für beide Tabellen identisch
   const colgroupHtml = `<colgroup>
     <col style="width:${COL_STAFF}px;min-width:${COL_STAFF}px">
     ${weeks.map(() => `<col style="width:${COL_KW}px;min-width:${COL_KW}px">`).join('')}
   </colgroup>`;
 
-  // ── Monats-Gruppen ─────────────────────────────────────────────────────────
+  // Monats-Gruppen
   const monthGroups = [];
   let curMonth = null;
   weeks.forEach(wk => {
@@ -418,30 +508,36 @@ function renderMatrix() {
     }
   });
 
-  // ── Header-HTML ────────────────────────────────────────────────────────────
+  // Monatszeile
   let monthRowHtml = '<tr class="month-row"><th class="staff-col"></th>';
   monthGroups.forEach(g => {
     monthRowHtml += `<th colspan="${g.colspan}">${g.label}</th>`;
   });
   monthRowHtml += '</tr>';
 
+  // KW-Zeile – mit Tooltip "Mo-Fr Datum"
   let kwRowHtml = '<tr class="kw-row"><th class="staff-col">Mitarbeiter / Rolle</th>';
   weeks.forEach(wk => {
     const isCurrent = (wk === currentWk);
+    const isPast    = wk < currentWk;
     const kwNum = parseInt(wk.split('-W')[1]);
-    kwRowHtml += `<th class="${isCurrent ? 'kw-header-current' : ''}">KW ${kwNum}</th>`;
+    const mon   = weekMonday(wk);
+    const fri   = weekFriday(wk);
+    const tip   = `${fmtDate(mon)}–${fmtDate(fri)}`;
+    const pastStyle = isPast ? 'opacity:.5;' : '';
+    kwRowHtml += `<th class="${isCurrent ? 'kw-header-current' : ''}"
+                      style="${pastStyle}" title="${tip}">KW ${kwNum}</th>`;
   });
   kwRowHtml += '</tr>';
 
-  // Header-Tabelle: colgroup + thead
+  // Header einsetzen
   const headerTable = document.getElementById('planning-header-table');
-  // colgroup einfügen/ersetzen
   const oldCg = headerTable.querySelector('colgroup');
   if (oldCg) oldCg.remove();
   headerTable.insertAdjacentHTML('afterbegin', colgroupHtml);
   document.getElementById('planning-thead').innerHTML = monthRowHtml + kwRowHtml;
 
-  // ── Body-HTML ──────────────────────────────────────────────────────────────
+  // Body-Zeilen
   const devs  = staff_roles.filter(r => r.role === 'Developer')
                             .sort((a,b) => a.shortname.localeCompare(b.shortname));
   const tests = staff_roles.filter(r => r.role === 'Tester')
@@ -469,12 +565,28 @@ function renderMatrix() {
       </td>`;
 
     weeks.forEach(wk => {
+      const isPast       = wk < currentWk;
       const capHours     = (capData.week_hours || {})[wk] || 0;
       const absInfo      = staffAbs[wk];
       const allWeekItems = staffPlan[wk] || [];
       const weekItems    = allWeekItems.filter(pl => pl.role_id === sr.role_id);
       const blockedByOtherRole = allWeekItems.some(pl => pl.role_id !== sr.role_id);
 
+      // Vergangene KW: ausgegraut, keine Interaktion
+      if (isPast) {
+        const chips = weekItems.map(pl => {
+          const label  = esc(pl.task_name || pl.project_name || '?');
+          const color  = pl.task_color || pl.project_color || '#555';
+          const txtCol = contrastColor(color);
+          const outdated = pl.is_outdated ? ' outdated' : '';
+          return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
+                       title="${label}">${label}</div>`;
+        }).join('');
+        row += `<td class="past-cell" title="Vergangene KW">${chips}</td>`;
+        return;
+      }
+
+      // Abwesenheit – Mehrheit
       if (absInfo && absInfo.is_majority) {
         const label = absInfo.type || 'Abwesend';
         const frac  = absInfo.total_days > 0 ? `${absInfo.absent_days}/${absInfo.total_days} T.` : '';
@@ -485,18 +597,20 @@ function renderMatrix() {
         return;
       }
 
+      // Gesperrt weil andere Rolle bereits eingeplant
       if (blockedByOtherRole && weekItems.length === 0) {
-        const blocker = allWeekItems[0];
-        const bl = esc(blocker.task_name || blocker.project_name || '');
+        const bl = esc((allWeekItems[0] || {}).task_name || (allWeekItems[0] || {}).project_name || '');
         row += `<td class="absent-cell" style="font-size:10px"
-                    title="Bereits als andere Rolle eingeplant: ${bl}">
+                    title="Andere Rolle eingeplant: ${bl}">
                   <span style="opacity:.6">— ${bl} —</span>
                 </td>`;
         return;
       }
 
       const partialClass = (absInfo && absInfo.absent_days > 0) ? ' partial-absent-cell' : '';
-      const tooltip = `Kap: ${Math.round(capHours * 10) / 10}h`
+      const mon   = weekMonday(wk);
+      const fri   = weekFriday(wk);
+      const tooltip = `KW ${parseInt(wk.split('-W')[1])}: ${fmtDate(mon)}–${fmtDate(fri)} | Kap: ${Math.round(capHours*10)/10}h`
                     + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
       const chips = weekItems.map(pl => {
@@ -506,18 +620,20 @@ function renderMatrix() {
         const pid       = pl.project_id != null ? pl.project_id : 'null';
         const tid       = pl.task_id    != null ? pl.task_id    : 'null';
         const outdated  = pl.is_outdated ? ' outdated' : '';
-        const outdatedTitle = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
+        const oTitle    = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
         return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
-                     title="${label}${outdatedTitle}">
+                     title="${label}${oTitle}">
                   <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
                   <button class="remove-btn"
                           onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid})">×</button>
                 </div>`;
       }).join('');
 
+      // data-attrs für Klick-Zuweisung
       row += `<td class="droptarget${partialClass}"
                   ondragover="cellDragOver(event)"
                   ondrop="cellDrop(event,'${esc(name)}',${sr.role_id},'${wk}')"
+                  onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"
                   title="${tooltip}">${chips}</td>`;
     });
 
@@ -532,22 +648,16 @@ function renderMatrix() {
   });
   tbody += '</tr>';
 
-  // Body-Tabelle: colgroup + tbody
   const bodyTable = document.getElementById('planning-body-table');
   const oldCgB = bodyTable.querySelector('colgroup');
   if (oldCgB) oldCgB.remove();
   bodyTable.insertAdjacentHTML('afterbegin', colgroupHtml);
   document.getElementById('planning-tbody').innerHTML = tbody;
 
-  // ── Scroll-Synchronisierung ───────────────────────────────────────────────
-  // body-wrap scrollt → header-wrap folgt (nur scrollLeft, kein Scrollbar)
   const bodyWrap   = document.getElementById('planning-body-wrap');
   const headerWrap = document.getElementById('planning-header-wrap');
-  // Listener nur einmal registrieren
   bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
 }
-
-// syncHeaderWidths wird nicht mehr benötigt (Breiten via colgroup fix)
 
 // ── Drag-Quellen rendern ───────────────────────────────────────────────────────
 function renderDragSources() {
@@ -569,11 +679,12 @@ function renderDragSources() {
             ondragstart="dragStart(event,'task',${t.task_id},'${esc(t.task_name)}','${t.color_hexcode||'#888'}')">
          <span class="dot" style="background:${t.color_hexcode||'#888'}"></span>
          <span>${esc(t.task_name)}</span>
-         ${t.project_name
-           ? `<span class="text-dim" style="font-size:11px;margin-left:auto">${esc(t.project_name)}</span>`
-           : ''}
+         ${t.project_name ? `<span class="text-dim" style="font-size:11px;margin-left:auto">${esc(t.project_name)}</span>` : ''}
        </div>`
     ).join('') || '<div class="text-dim" style="font-size:12px">Keine Tasks</div>';
+
+  // Section-Höhen nach Befüllung aktualisieren
+  setTimeout(initSections, 50);
 }
 
 // ── Drag & Drop ────────────────────────────────────────────────────────────────
@@ -591,46 +702,82 @@ function cellDragOver(e) {
 function cellDrop(e, staff, roleId, weekKey) {
   e.preventDefault();
   if (!dragPayload) return;
-  // Jede Zeile repräsentiert genau eine Rolle (pro Mitarbeiter+Rolle eigene Zeile),
-  // daher ist roleId hier eindeutig – kein Modal nötig.
-  doAssign(staff, roleId, weekKey);
+  doAssign(staff, roleId, weekKey, dragPayload);
 }
 
-function openAssignModal(staff, staffRoles, weekKey) {
-  assignTarget = { staff, staffRoles, weekKey };
-  document.getElementById('assign-info').textContent =
-    `${dragPayload.name}  →  ${staff}  |  ${weekKey}`;
+// ── Klick-Zuweisung ───────────────────────────────────────────────────────────
+function cellClick(e, staff, roleId, weekKey) {
+  // Klick auf remove-btn nicht abfangen
+  if (e.target.classList.contains('remove-btn')) return;
+  e.stopPropagation();
 
-  const sel = document.getElementById('assign-role');
-  sel.innerHTML = staffRoles.map(r =>
-    `<option value="${r.role_id}">${r.role}</option>`
+  const dd = document.getElementById('cell-dropdown');
+  // Gleiche Zelle nochmals geklickt → schließen
+  if (openDropdownCell === `${staff}|${roleId}|${weekKey}`) {
+    closeDropdown();
+    return;
+  }
+  openDropdownCell = `${staff}|${roleId}|${weekKey}`;
+
+  const { available_projects, available_tasks } = planningData;
+  const items = [
+    ...(available_projects || []).map(p => ({
+      type: 'project', id: p.project_id, name: p.project_name,
+      color: p.color_hexcode || '#555', sub: p.customer
+    })),
+    ...(available_tasks || []).map(t => ({
+      type: 'task', id: t.task_id, name: t.task_name,
+      color: t.color_hexcode || '#888', sub: t.project_name || ''
+    })),
+  ];
+
+  if (!items.length) { toast('Keine Projekte/Tasks verfügbar', 'error'); return; }
+
+  dd.innerHTML = items.map(it =>
+    `<div class="cell-dropdown-item"
+          onclick="dropdownAssign(event,'${esc(staff)}',${roleId},'${weekKey}','${it.type}',${it.id},'${esc(it.name)}','${it.color}')">
+       <span style="width:10px;height:10px;border-radius:50%;background:${it.color};flex-shrink:0"></span>
+       <span>${esc(it.name)}</span>
+       <span class="text-dim" style="font-size:10px;margin-left:auto">${esc(it.sub)}</span>
+     </div>`
   ).join('');
 
-  document.getElementById('assign-modal').classList.add('open');
+  // Positionieren relativ zur Zelle
+  const rect = e.currentTarget.getBoundingClientRect();
+  dd.style.display = 'block';
+  dd.style.top  = (rect.bottom + window.scrollY) + 'px';
+  dd.style.left = (rect.left   + window.scrollX) + 'px';
+  dd.style.position = 'absolute';
 }
 
-function closeAssignModal() {
-  document.getElementById('assign-modal').classList.remove('open');
+async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) {
+  e.stopPropagation();
+  closeDropdown();
+  const payload = { type, id, name, color };
+  await doAssign(staff, roleId, weekKey, payload);
 }
 
-async function confirmAssign() {
-  const roleId = parseInt(document.getElementById('assign-role').value);
-  closeAssignModal();
-  await doAssign(assignTarget.staff, roleId, assignTarget.weekKey);
+function closeDropdown() {
+  document.getElementById('cell-dropdown').style.display = 'none';
+  openDropdownCell = null;
 }
 
-async function doAssign(staff, roleId, weekKey) {
-  if (!dragPayload) return;
-  const payload = {
+// Klick außerhalb schließt Dropdown
+document.addEventListener('click', () => closeDropdown());
+
+// ── Zuweisung ausführen ────────────────────────────────────────────────────────
+async function doAssign(staff, roleId, weekKey, payload) {
+  if (!payload) return;
+  const body = {
     staff,
     role_id:       roleId,
     calendar_week: weekKey,
-    project_id: dragPayload.type === 'project' ? dragPayload.id : null,
-    task_id:    dragPayload.type === 'task'    ? dragPayload.id : null,
+    project_id: payload.type === 'project' ? payload.id : null,
+    task_id:    payload.type === 'task'    ? payload.id : null,
   };
   try {
-    await api('POST', '/api/planning/assign', payload);
-    toast(`Zugewiesen: ${dragPayload.name}`);
+    await api('POST', '/api/planning/assign', body);
+    toast(`Zugewiesen: ${payload.name}`);
     loadPlanning();
   } catch(e) {
     toast(e.message, 'error');
@@ -652,6 +799,27 @@ async function removePlanning(e, staff, weekKey, projectId, taskId) {
   }
 }
 
+function openAssignModal(staff, staffRoles, weekKey) {
+  assignTarget = { staff, staffRoles, weekKey };
+  document.getElementById('assign-info').textContent =
+    `${dragPayload ? dragPayload.name : '?'}  →  ${staff}  |  ${weekKey}`;
+  const sel = document.getElementById('assign-role');
+  sel.innerHTML = staffRoles.map(r =>
+    `<option value="${r.role_id}">${r.role}</option>`
+  ).join('');
+  document.getElementById('assign-modal').classList.add('open');
+}
+
+function closeAssignModal() {
+  document.getElementById('assign-modal').classList.remove('open');
+}
+
+async function confirmAssign() {
+  const roleId = parseInt(document.getElementById('assign-role').value);
+  closeAssignModal();
+  await doAssign(assignTarget.staff, roleId, assignTarget.weekKey, dragPayload);
+}
+
 // ── Projektstatus ─────────────────────────────────────────────────────────────
 async function loadProjectStatus() {
   const rows = await api('GET', '/api/planning/project_status');
@@ -661,14 +829,12 @@ async function loadProjectStatus() {
     lightgreen: ['#7DCEA0', 'rgba(46,204,113,0.06)'],
     orange:     ['#E67E22', 'rgba(230,126,34,0.12)'],
   };
+  const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';
 
   document.getElementById('proj-status-body').innerHTML = rows.map(p => {
     const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];
-    // Liefertermin Ist anzeigen wenn Projekt vollständig oder überplant (grün / hellgrün)
     const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
     const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;
-    // KW-Anzeige: nur Nummer ohne Jahr
-    const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';
     return `<tr style="background:${bgColor}">
       <td>
         <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
@@ -677,19 +843,18 @@ async function loadProjectStatus() {
       <td class="text-dim">${esc(p.customer)}</td>
       <td class="text-mono">${p.target_hours}h</td>
       <td class="text-mono text-dim">${fmtKw(p.due_kw)}</td>
-      <td class="text-mono" style="color:${istDiffers ? 'var(--warn)' : 'var(--text2)'}">
+      <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
         ${showIst ? fmtKw(p.ist_kw) : '–'}
       </td>
-      <td class="text-mono" style="color:${p.remaining_impl > 0 ? 'var(--danger)' : p.remaining_impl < 0 ? '#7DCEA0' : 'var(--accent2)'}">
+      <td class="text-mono" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'}">
         ${Math.round(p.remaining_impl)}h
       </td>
-      <td class="text-mono" style="color:${p.remaining_test > 0 ? 'var(--danger)' : p.remaining_test < 0 ? '#7DCEA0' : 'var(--accent2)'}">
+      <td class="text-mono" style="color:${p.remaining_test>0?'var(--danger)':p.remaining_test<0?'#7DCEA0':'var(--accent2)'}">
         ${Math.round(p.remaining_test)}h
       </td>
       <td>
-        <span class="status-pill"
-              style="background:${bgColor};color:${txtColor};border:1px solid ${txtColor}">
-          ${p.remaining_hours > 0 ? '+' : ''}${Math.round(p.remaining_hours)}h
+        <span class="status-pill" style="background:${bgColor};color:${txtColor};border:1px solid ${txtColor}">
+          ${p.remaining_hours>0?'+':''}${Math.round(p.remaining_hours)}h
         </span>
       </td>
     </tr>`;
@@ -703,16 +868,6 @@ function contrastColor(hex) {
   const g = parseInt(hex.slice(3,5), 16);
   const b = parseInt(hex.slice(5,7), 16);
   return (r * 299 + g * 587 + b * 114) / 1000 > 140 ? '#000' : '#fff';
-}
-
-function getIsoWeek(d) {
-  const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
-  const y1  = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
-  return {
-    year: utc.getUTCFullYear(),
-    week: Math.ceil((((utc - y1) / 86400000) + 1) / 7),
-  };
 }
 
 function esc(s) {
