@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{% block title %}Kapaverwaltung{% endblock %}</title>
+<title>{% block title %}KapaBase{% endblock %}</title>
 <style>
   /* ── Design-System ────────────────────────────────────────────────────── */
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
@@ -50,14 +50,17 @@
   }
 
   nav .logo {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--accent);
-    letter-spacing: 0.05em;
-    margin-right: 24px;
-    white-space: nowrap;
-  }
+	display: flex;
+	align-items: center;
+	margin-right: 24px;
+	white-space: nowrap;
+	}
+
+  nav .logo img {
+	height: 28px;   /* Größe fürs Menü */
+	width: auto;
+	display: block;
+	}
 
   nav a {
     color: var(--text2);
@@ -328,7 +331,9 @@
 <body>
 
 <nav>
-  <span class="logo">⬡ KAPA</span>
+  <span class="logo">
+   <img src="{{ url_for('static', path='logo.png') }}" alt="KapaBase"> &nbsp; KapaBase
+  </span>
   <a href="/staff"    id="nav-staff">Mitarbeiter</a>
   <a href="/absence"  id="nav-absence">Abwesenheiten</a>
   <a href="/projects" id="nav-projects">Projekte</a>
