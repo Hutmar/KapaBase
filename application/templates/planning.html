@@ -209,16 +209,30 @@
     font-weight: 600;
     font-family: var(--font-mono);
   }
+
+  /* Veraltete Planungseinträge (neuere worked_hours vorhanden) */
+  .planning-cell.outdated {
+    opacity: 0.45;
+    text-decoration: line-through;
+    filter: grayscale(60%);
+  }
 </style>
 
 <!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
 <div class="card" style="padding-bottom:0">
   <div class="card-header" style="padding-bottom:16px">
     <h1>Ressourcenplanung</h1>
-    <div style="display:flex;gap:12px;align-items:center">
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
       <label class="flex-gap text-dim" style="font-size:12px">
         <input type="checkbox" id="use-current-week" style="width:auto" onchange="loadPlanning()">
         Ab aktueller KW starten
+      </label>
+      <label class="flex-gap text-dim" style="font-size:12px">
+        <input type="checkbox" id="use-end-week" style="width:auto" onchange="toggleEndWeek()">
+        Bis KW:
+        <select id="end-week-select" style="width:110px" disabled onchange="loadPlanning()">
+          <option value="">– wählen –</option>
+        </select>
       </label>
       <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
     </div>
@@ -309,10 +323,55 @@ const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt',
 // ── Daten laden ────────────────────────────────────────────────────────────────
 async function loadPlanning() {
   const useCurrent = document.getElementById('use-current-week').checked;
-  planningData = await api('GET', `/api/planning/?use_current_week=${useCurrent}`);
-  renderMatrix();
+  const useEndWeek = document.getElementById('use-end-week').checked;
+  const endWeekVal = useEndWeek ? document.getElementById('end-week-select').value : '';
+
+  let url = `/api/planning/?use_current_week=${useCurrent}`;
+  if (endWeekVal) url += `&end_week=${encodeURIComponent(endWeekVal)}`;
+
+  try {
+    planningData = await api('GET', url);
+  } catch(e) {
+    toast('Fehler beim Laden der Planungsdaten: ' + e.message, 'error');
+    console.error('loadPlanning error:', e);
+    return;
+  }
+
+  // Dropdown mit den geladenen KW befüllen (beim ersten Laden und nach Änderung)
+  populateEndWeekDropdown(planningData.weeks, endWeekVal);
+
+  try {
+    renderMatrix();
+  } catch(e) {
+    toast('Fehler beim Rendern der Matrix: ' + e.message, 'error');
+    console.error('renderMatrix error:', e);
+    return;
+  }
   renderDragSources();
   loadProjectStatus();
+}
+
+function toggleEndWeek() {
+  const cb  = document.getElementById('use-end-week');
+  const sel = document.getElementById('end-week-select');
+  sel.disabled = !cb.checked;
+  if (!cb.checked) sel.value = '';
+  loadPlanning();
+}
+
+// Dropdown mit KW-Optionen befüllen
+function populateEndWeekDropdown(weeks, currentVal) {
+  const sel = document.getElementById('end-week-select');
+  const prev = currentVal || sel.value;
+  sel.innerHTML = '<option value="">– wählen –</option>';
+  (weeks || []).forEach(wk => {
+    const kwNum = parseInt(wk.split('-W')[1]);
+    const opt = document.createElement('option');
+    opt.value = wk;
+    opt.textContent = `KW ${kwNum}`;
+    if (wk === prev) opt.selected = true;
+    sel.appendChild(opt);
+  });
 }
 
 // ── Hilfsfunktion: ISO-Montag aus 'YYYY-WNN' ──────────────────────────────────
@@ -441,12 +500,15 @@ function renderMatrix() {
                     + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
       const chips = weekItems.map(pl => {
-        const label  = esc(pl.task_name || pl.project_name || '?');
-        const color  = pl.task_color || pl.project_color || '#555';
-        const txtCol = contrastColor(color);
-        const pid    = pl.project_id != null ? pl.project_id : 'null';
-        const tid    = pl.task_id    != null ? pl.task_id    : 'null';
-        return `<div class="planning-cell" style="background:${color};color:${txtCol}" title="${label}">
+        const label     = esc(pl.task_name || pl.project_name || '?');
+        const color     = pl.task_color || pl.project_color || '#555';
+        const txtCol    = contrastColor(color);
+        const pid       = pl.project_id != null ? pl.project_id : 'null';
+        const tid       = pl.task_id    != null ? pl.task_id    : 'null';
+        const outdated  = pl.is_outdated ? ' outdated' : '';
+        const outdatedTitle = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
+        return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
+                     title="${label}${outdatedTitle}">
                   <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
                   <button class="remove-btn"
                           onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid})">×</button>

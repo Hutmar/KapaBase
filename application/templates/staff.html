@@ -113,6 +113,10 @@ function calcHpd() {
   }
 }
 
+document.getElementById('f-hpd').addEventListener('input', function() {
+  this._manual = this.value.length > 0;
+});
+
 async function openModal(name=null) {
   editingName = name;
   const modal = document.getElementById('modal-backdrop');

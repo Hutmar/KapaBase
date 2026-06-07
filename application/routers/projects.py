@@ -79,7 +79,7 @@ def _next_free_color() -> str:
 @router.get("/")
 def list_projects(
     planned: Optional[bool] = None,
-    done: Optional[bool] = False,     # default: nur nicht-erledigte
+    done: Optional[bool] = None,
     search: Optional[str] = None,
 ):
     """Alle Projekte mit optionalen Filtern und Summen."""

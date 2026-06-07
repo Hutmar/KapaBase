@@ -116,6 +116,7 @@ def _build_at_hols(start: date, end: date) -> set:
 @router.get("/")
 def get_planning(
     use_current_week: bool = False,
+    end_week: Optional[str] = None,   # Format: 'YYYY-WNN' – wenn gesetzt, bis-KW-Filter
 ):
     """
     Vollständige Planungsmatrix.
@@ -172,14 +173,17 @@ def get_planning(
         shortnames = list({r["shortname"] for r in staff_roles})
 
         # ── Abwesenheiten im Zeitraum ───────────────────────────────────────
-        cur.execute("""
-            SELECT shortname, absence_from, absence_to, absence_type
-            FROM absence
-            WHERE shortname = ANY(%s)
-              AND absence_to   >= %s
-              AND absence_from <= %s
-        """, (shortnames, start_date, end_date))
-        absences = cur.fetchall()
+        if shortnames:
+            cur.execute("""
+                SELECT shortname, absence_from, absence_to, absence_type
+                FROM absence
+                WHERE shortname = ANY(%s)
+                  AND absence_to   >= %s
+                  AND absence_from <= %s
+            """, (shortnames, start_date, end_date))
+            absences = cur.fetchall()
+        else:
+            absences = []
         absences_list = [dict(a) for a in absences]
 
         # ── Bestehende Planungen laden ──────────────────────────────────────
@@ -195,17 +199,26 @@ def get_planning(
             WHERE pl.end_date   >= %s
               AND pl.start_date <= %s
         """, (start_date, end_date))
-        plannings_raw = cur.fetchall()
+        plannings_raw = [dict(r) for r in cur.fetchall()]
 
         # ── Verfügbare Projekte (Drag&Drop) ────────────────────────────────
+        # Filter: wenn end_week gesetzt, nur Projekte deren start_date vor dem
+        # Montag der gewählten KW liegt. Sortierung: due_date ASC.
         cur.execute("""
             SELECT project_id, project_name, customer, color_hexcode,
                    start_date, due_date, target_hours, impl_hours, test_hours
             FROM project
             WHERE planned = TRUE AND done = FALSE
-            ORDER BY sort_order, project_name
+            ORDER BY due_date ASC NULLS LAST, project_name ASC
         """)
-        available_projects = cur.fetchall()
+        all_projects = cur.fetchall()
+
+        # Letztes worked_hours-Datum je Projekt (für outdated-Markierung)
+        cur.execute("""
+            SELECT project_id, MAX(day) AS max_day
+            FROM worked_hours GROUP BY project_id
+        """)
+        max_worked_day = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
 
         # ── Verfügbare Tasks (Drag&Drop) ───────────────────────────────────
         cur.execute("""
@@ -228,14 +241,6 @@ def get_planning(
         if not weeks or weeks[-1] != wk:
             weeks.append(wk)
         cur_d += timedelta(days=7)
-
-    # ── Planungs-Map: Planungen → KW ────────────────────────────────────────
-    # Jede Planung hat start_date/end_date (= Mo/Fr einer KW).
-    # Wir ermitteln die KW aus dem Montag (start_date).
-    plan_map: dict = {}   # {staff: {week_key: [entry, ...]}}
-    for pl in plannings_raw:
-        wk = iso_week_key(pl["start_date"])
-        plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(dict(pl))
 
     # ── Abwesenheits-Majoritäts-Map ──────────────────────────────────────────
     # {shortname: {week_key: {'is_majority': bool, 'type': str}}}
@@ -279,6 +284,37 @@ def get_planning(
             "hours_per_day": hpd,
             "week_hours": week_hours,
         }
+
+    # ── end_week-Filter für available_projects ───────────────────────────────
+    # Wenn end_week gesetzt: nur Projekte anzeigen deren start_date vor dem
+    # Montag dieser KW liegt (d.h. bereits laufende / bald startende Projekte)
+    if end_week:
+        ew_parts = end_week.split("-W")
+        ew_monday = date.fromisocalendar(int(ew_parts[0]), int(ew_parts[1]), 1)
+        available_projects = [
+            p for p in all_projects
+            if p["start_date"] is not None and p["start_date"] < ew_monday
+        ]
+    else:
+        available_projects = list(all_projects)
+
+    # ── Outdated-Flag in plan_map setzen ────────────────────────────────────
+    # Eine Planungszeile gilt als "veraltet" wenn es für das zugehörige Projekt
+    # bereits worked_hours-Einträge gibt, deren day NACH dem end_date der Planung liegt.
+    # Solche Zeilen werden in der Matrix farblich gekennzeichnet und in project_status
+    # nicht als offene Planstunden eingerechnet.
+    plan_map: dict = {}
+    for pl in plannings_raw:
+        wk   = iso_week_key(pl["start_date"])
+        pid  = pl["project_id"]
+        entry = dict(pl)
+        # Outdated: hat das Projekt neuere worked_hours als diese Planung?
+        entry["is_outdated"] = (
+            pid is not None
+            and pid in max_worked_day
+            and max_worked_day[pid] > pl["end_date"]
+        )
+        plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(entry)
 
     return {
         "weeks":              weeks,
@@ -389,7 +425,7 @@ def project_planning_status():
                    p.due_date, p.color_hexcode
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
-            ORDER BY p.sort_order, p.project_name
+            ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
         """)
         projects = cur.fetchall()
 
@@ -413,7 +449,7 @@ def project_planning_status():
             JOIN staff s   ON s.shortname  = pl.staff
             WHERE pl.project_id IS NOT NULL
         """)
-        plan_rows = cur.fetchall()
+        plan_rows = [dict(r) for r in cur.fetchall()]
 
         # Abwesenheiten für beteiligte Mitarbeiter
         if plan_rows:
@@ -431,14 +467,30 @@ def project_planning_status():
             all_absences = []
             min_d = max_d = date.today()
 
+        # Letztes worked_hours-Datum je Projekt
+        cur.execute("""
+            SELECT project_id, MAX(day) AS max_day
+            FROM worked_hours GROUP BY project_id
+        """)
+        max_worked_day_status = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
+
     # Feiertage
     at_hols = _build_at_hols(min_d, max_d) if plan_rows else set()
 
     # Geplante Stunden je Projekt + Rolle aggregieren
+    # Veraltete Planungen (neuere worked_hours vorhanden) werden NICHT eingerechnet.
     plan_agg:     dict = {}   # {project_id: {'Developer': float, 'Tester': float}}
     last_end_map: dict = {}   # {project_id: date}
 
     for pr in plan_rows:
+        pid  = pr["project_id"]
+        # Outdated-Check: gibt es worked_hours mit day > pl.end_date?
+        is_outdated = (
+            pid in max_worked_day_status
+            and max_worked_day_status[pid] > pr["end_date"]
+        )
+        if is_outdated:
+            continue  # diese Planung nicht in die offenen Stunden einrechnen
         pid  = pr["project_id"]
         wk   = iso_week_key(pr["start_date"])
         h    = _effective_hours_in_week(

@@ -138,16 +138,20 @@ def update_staff(shortname: str, data: StaffUpdate):
         new_active = data.is_active if data.is_active is not None \
                      else existing["is_active"]
 
-        # hours_per_day-Logik:
-        if data.hours_per_week is not None:
-            # hours_per_week geändert → hours_per_day neu berechnen
-            new_hpd =  round(new_hpw / Decimal("5"), 2)
-        elif data.hours_per_day is not None:
-            # Manuell gesetzt → remark Pflicht
+        # 1. Hat der User explizit Stunden pro Tag eingegeben?
+        if data.hours_per_day is not None:
             if not new_remark:
-                raise HTTPException(status_code=422,
-                                    detail="Remark ist Pflicht bei manuellem hours_per_day")
+                raise HTTPException(
+                    status_code=422,
+                    detail="Remark ist Pflicht bei manuellem hours_per_day"
+                )
             new_hpd = data.hours_per_day
+
+        # 2. Wurden die Wochenstunden übergeben, aber KEIN Tagessatz? (-> Automatische Berechnung)
+        elif data.hours_per_week is not None:
+            new_hpd = round(new_hpw / Decimal("5"), 2)
+
+        # 3. Nichts von beidem hat sich geändert
         else:
             new_hpd = existing["hours_per_day"]
 

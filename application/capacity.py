@@ -63,8 +63,8 @@ def calculate_total_capacity(start: date, end: date,
                               active_only: bool = True) -> Dict:
     """
     Berechnet die Gesamtkapazität aller (aktiven) Mitarbeiter im Zeitraum [start, end].
-    Zieht Feiertage und Abwesenheiten ab.
-    Rückgabe: {'total_hours': float, 'by_staff': {shortname: float}}
+    Zieht Feiertage und Abwesenheiten ab. Doppelbelegungen (z.B. Urlaub am Feiertag) 
+    werden dank Set-Operationen nicht mehrfach abgezogen.
     """
     with get_cursor() as cur:
         # Alle aktiven Mitarbeiter mit ihren Tagesstunden
@@ -90,22 +90,28 @@ def calculate_total_capacity(start: date, end: date,
     # Abwesenheitstage pro Mitarbeiter als Set aufbauen
     absent_days: Dict[str, set] = {s: set() for s in shortnames}
     for ab in absences:
+        # Begrenze die Abwesenheitstage auf das Berechnungsfenster [start, end]
         cur_d = max(ab["absence_from"], start)
         end_d = min(ab["absence_to"], end)
+        
+        # Sicherstellen, dass wir mit Kopien arbeiten und keine Endlosschleife triggern
         while cur_d <= end_d:
             absent_days[ab["shortname"]].add(cur_d)
             cur_d += timedelta(days=1)
 
-    # Arbeitstage im Zeitraum (ohne Feiertage)
+    # Arbeitstage im Zeitraum ermitteln (working_days_in_range filtert Sa/So und AT-Feiertage bereits raus!)
     work_days = set(working_days_in_range(start, end))
 
     by_staff = {}
-    total = Decimal("0.0")
+    total = 0.0  # Als float initialisieren, um Typenkonflikte zu vermeiden
+    
     for s in staff_list:
         name = s["shortname"]
-        hpd = s["hours_per_day"]
-        # Effektive Arbeitstage = Arbeitstage minus Abwesenheiten
+        hpd = float(s["hours_per_day"]) # Absicherung gegen PostgreSQL 'Numeric/Decimal'-Typen
+        
+        # Echte Arbeitstage = Kalender-Arbeitstage minus Abwesenheiten an Arbeitstagen
         effective_days = work_days - absent_days[name]
+        
         hours = len(effective_days) * hpd
         by_staff[name] = hours
         total += hours

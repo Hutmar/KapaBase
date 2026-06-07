@@ -1,0 +1,1 @@
+in Projekte werden Projekte mit "Done=TRUE" nie angezeigt

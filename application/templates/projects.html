@@ -165,7 +165,7 @@ function toggleDetails() {
 async function loadProjects() {
   const search  = document.getElementById('search').value.trim();
   const planned = document.getElementById('f-planned').checked;
-  const done    = document.getElementById('f-done').checked;
+  const showDone = document.getElementById('f-done').checked;
 
   // Nutze URLSearchParams, um die Query-Parameter sauber zu bauen
   const params = new URLSearchParams();
@@ -176,7 +176,7 @@ async function loadProjects() {
   }
   
   // Wenn "Auch erledigte" NICHT aktiv ist, filtere nach done=false
-  if (!done) {
+  if (!showDone) {
     params.append('done', 'false');
   }
   
