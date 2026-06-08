@@ -17,8 +17,11 @@ from db import get_cursor
 
 def get_austrian_holidays(year: int) -> set:
     """Gibt alle österreichischen Feiertage (Wien = Gesamtösterreich) für ein Jahr zurück."""
-    return set(holidays.Austria(subdiv="W", years=year).keys())
-
+    try:
+        return set(holidays.Austria(subdiv="W", years=year).keys())
+    except TypeError:
+        # Alte API (< 0.11)
+        return set(holidays.Austria(prov="W", years=year).keys())
 
 def is_working_day(d: date, at_holidays: set) -> bool:
     """True wenn d ein Arbeitstag (Mo–Fr, kein Feiertag) ist."""
