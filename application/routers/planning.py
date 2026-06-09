@@ -136,6 +136,7 @@ def get_planning(
                    MAX(due_date)   AS max_due
             FROM project
             WHERE planned = TRUE AND done = FALSE
+            AND project_type = 'Project' 
             AND start_date IS NOT NULL AND due_date IS NOT NULL
         """)
         range_row = cur.fetchone()
@@ -210,9 +211,7 @@ def get_planning(
                    p.start_date, p.due_date, p.target_hours, p.impl_hours, p.test_hours
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
-            AND NOT EXISTS (
-                SELECT 1 FROM tasks t WHERE t.project_id = p.project_id
-            )
+            AND p.project_type = 'Project' 
             ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
         """)
         all_projects = cur.fetchall()

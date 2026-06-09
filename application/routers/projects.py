@@ -6,9 +6,16 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
+from enum import Enum
 from db import get_cursor
 from capacity import calculate_total_capacity  
 router = APIRouter()
+
+# ── Enum für Projekt-Typ ───────────────────────────────────────────────────────
+class ProjectTypeEnum(str, Enum):
+    PROJECT = "Project"
+    OPERATIONS = "Operations"
+    INTERNAL = "Internal"
 
 # ── Pydantic-Modelle ───────────────────────────────────────────────────────────  
 class ProjectBase(BaseModel):
@@ -25,6 +32,7 @@ class ProjectBase(BaseModel):
     done: bool = False
     color_hexcode: Optional[str] = None
     sort_order: int = 0  
+    project_type: ProjectTypeEnum = ProjectTypeEnum.PROJECT
 
 class ProjectUpdate(BaseModel):
     project_name: Optional[str] = None
@@ -40,6 +48,7 @@ class ProjectUpdate(BaseModel):
     done: Optional[bool] = None
     color_hexcode: Optional[str] = None
     sort_order: Optional[int] = None
+    project_type: Optional[ProjectTypeEnum] = None
 
 # ── Hilfsfunktion: nächste freie Farbe ────────────────────────────────────────  
 PREDEFINED_COLORS = [
@@ -123,18 +132,18 @@ def list_projects(
                 "period_start": str(range_row["min_start"]),
                 "period_end":   str(range_row["max_due"]),
                 "total_capacity_hours": cap["total_hours"],
-                "diff": float(sum_target) - cap["total_hours"], # sum_target explizit zu float konvertieren
-                "working_days_in_period": cap["working_days_in_period"], # Neu
-                "holidays_in_period": cap["holidays_in_period"],         # Neu
-                "period_length_days": cap["period_length_days"]          # Neu
+                "diff": float(sum_target) - cap["total_hours"],
+                "working_days_in_period": cap["working_days_in_period"],
+                "holidays_in_period": cap["holidays_in_period"],
+                "period_length_days": cap["period_length_days"]
             }
         else:
             cap_info = {
                 "period_start": None, "period_end": None,
                 "total_capacity_hours": 0.0, "diff": float(sum_target),
-                "working_days_in_period": 0,                             # Neu
-                "holidays_in_period": 0,                                 # Neu
-                "period_length_days": 0                                  # Neu
+                "working_days_in_period": 0,
+                "holidays_in_period": 0,
+                "period_length_days": 0
             }  
         return {
             "projects": projects,
@@ -167,13 +176,13 @@ def create_project(data: ProjectBase):
         cur.execute("""
             INSERT INTO project
             (project_name, customer, jira_id, target_hours, impl_hours, test_hours,
-            planned, start_date, due_date, remarks, done, color_hexcode, sort_order)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            planned, start_date, due_date, remarks, done, color_hexcode, sort_order, project_type)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING project_id
         """, (data.project_name, data.customer, data.jira_id,
               data.target_hours, data.impl_hours, data.test_hours,
               data.planned, data.start_date, data.due_date,
-              data.remarks, data.done, data.color_hexcode, data.sort_order))
+              data.remarks, data.done, data.color_hexcode, data.sort_order, data.project_type.value))
         return {"project_id": cur.fetchone()["project_id"]}  
 
 @router.put("/{project_id}")
@@ -199,6 +208,7 @@ def update_project(project_id: int, data: ProjectUpdate):
             "done":         data.done         if data.done         is not None else ex["done"],
             "color_hexcode":data.color_hexcode if data.color_hexcode is not None else ex["color_hexcode"],
             "sort_order":   data.sort_order   if data.sort_order   is not None else ex["sort_order"],
+            "project_type": data.project_type.value if data.project_type is not None else ex["project_type"],
         }  
         if fields["impl_hours"] + fields["test_hours"] != fields["target_hours"]:
             raise HTTPException(status_code=422,
@@ -207,28 +217,16 @@ def update_project(project_id: int, data: ProjectUpdate):
             UPDATE project SET
             project_name=%s, customer=%s, jira_id=%s, target_hours=%s,
             impl_hours=%s, test_hours=%s, planned=%s, start_date=%s,
-            due_date=%s, remarks=%s, done=%s, color_hexcode=%s, sort_order=%s
+            due_date=%s, remarks=%s, done=%s, color_hexcode=%s, sort_order=%s, project_type=%s
             WHERE project_id=%s
         """, (fields["project_name"], fields["customer"], fields["jira_id"],
               fields["target_hours"], fields["impl_hours"], fields["test_hours"],
               fields["planned"], fields["start_date"], fields["due_date"],
               fields["remarks"], fields["done"], fields["color_hexcode"],
-              fields["sort_order"], project_id))  
+              fields["sort_order"], fields["project_type"], project_id))  
         return {"project_id": project_id}  
 
-@router.delete("/{project_id}", status_code=204)
-def delete_project(project_id: int):
-    """Projekt löschen (nur wenn keine Referenzen)."""
-    with get_cursor(commit=True) as cur:
-        cur.execute("SELECT COUNT(*) as cnt FROM tasks WHERE project_id=%s", (project_id,))
-        if cur.fetchone()["cnt"] > 0:
-            raise HTTPException(status_code=409, detail="Projekt hat zugeordnete Tasks")
-        cur.execute("SELECT COUNT(*) as cnt FROM worked_hours WHERE project_id=%s", (project_id,))
-        if cur.fetchone()["cnt"] > 0:
-            raise HTTPException(status_code=409, detail="Projekt hat geleistete Stunden")
-        cur.execute("DELETE FROM project WHERE project_id = %s", (project_id,))  
-
-@router.put("/reorder/bulk")
+@router.get("/reorder/bulk")
 def reorder_projects(order: List[dict]):
     """
     Bulk-Umsortierung: erwartet Liste von {project_id: int, sort_order: int}

@@ -721,7 +721,9 @@ function cellClick(e, staff, roleId, weekKey) {
 
   const { available_projects, available_tasks } = planningData;
   const items = [
-    ...(available_projects || []).map(p => ({
+    ...(available_projects || [])
+	.filter(p => !p.project_type || p.project_type === 'Project')
+	.map(p => ({
       type: 'project', id: p.project_id, name: p.project_name,
       color: p.color_hexcode || '#555', sub: p.customer
     })),

@@ -26,6 +26,9 @@ CREATE TABLE absence (
 	absence_type absenceType not null
 );
 
+
+CREATE TYPE projectType AS ENUM ('Project', 'Operations', 'Internal');
+
 create table project (
 	project_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	project_name VARCHAR(200) NOT NULL,
@@ -41,6 +44,7 @@ create table project (
 	remarks VARCHAR(1000) default null,
 	done boolean default FALSE,
 	color_hexcode char(7) default null,
+	project_type projectType not null default 'Project', 
 	unique(color_hexcode)
 );
 

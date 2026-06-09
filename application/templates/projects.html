@@ -1,19 +1,16 @@
-
-                        <!DOCTYPE html>
-                        <html lang="en">
-                        <head>
-                            <meta charset="UTF-8">
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-							<style>
-								body {
-									background-color: white; /* Ensure the iframe has a white background */
-								}
-
-								
-							</style>
-                        </head>
-                        <body>
-                            {% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            background-color: white; /* Ensure the iframe has a white background */
+        }
+    </style>
+</head>
+<body>
+    {% extends "base.html" %}
 {% block title %}Projekte – Kapaverwaltung{% endblock %}  
 
 {% block content %}
@@ -23,7 +20,6 @@
 <button class="btn btn-primary" onclick="openModal()">+ Neues Projekt</button>
 </div>  
 
-<!-- Filter-Zeile -->
 <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
 <input id="search" placeholder="🔍 Suche (Name, Kunde, Jira)" style="max-width:240px"
 oninput="saveFilterState(); loadProjects()">
@@ -41,17 +37,15 @@ Details anzeigen
 </label>
 </div>  
 
-<!-- Kapazitätssummary -->
 <div id="cap-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>  
 
-<!-- Tabelle -->
 <div style="overflow-x:auto">
 <table id="proj-table">
 <thead>
 <tr>
 <th>⇅</th>
 <th onclick="setAndSort('project_name')">Name ⇅</th>
-<th onclick="setAndSort('customer')">Kunde ⇅</th>
+<th onclick="setAndSort('project_type')">Typ ⇅</th> <th onclick="setAndSort('customer')">Kunde ⇅</th>
 <th class="detail-col">Jira</th>
 <th onclick="setAndSort('target_hours')">Soll-h ⇅</th>
 <th class="detail-col">Impl-h</th>
@@ -60,7 +54,7 @@ Details anzeigen
 <th class="detail-col">Done</th>
 <th class="detail-col" onclick="setAndSort('start_date')">Start ⇅</th>
 <th class="detail-col" onclick="setAndSort('due_date')">Due ⇅</th>
-<th onclick="setAndSort('due_date')">Liefertermin KW ⇅</th> <!-- detail-col entfernt -->
+<th onclick="setAndSort('due_date')">Liefertermin KW ⇅</th>
 <th class="detail-col">Farbe</th>
 <th>Bemerkung</th>
 <th style="width:100px"></th>
@@ -72,7 +66,6 @@ Details anzeigen
 </div>
 </div>  
 
-<!-- Diagramme -->
 <div class="card">
 <h2>Auslastungsübersicht</h2>
 <div style="display:flex;gap:20px;flex-wrap:wrap">
@@ -83,7 +76,6 @@ style="max-width:100%;border-radius:4px;background:#fff">
 </div>
 </div>  
 
-<!-- Modal Projekt -->
 <div class="modal-backdrop" id="modal-backdrop">
 <div class="modal" style="width:min(600px,95vw)">
 <div class="modal-title" id="modal-title">Neues Projekt</div>
@@ -92,6 +84,13 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <div class="form-row">
 <label>Name *</label>
 <input id="f-name">
+</div>
+<div class="form-row">
+<label>Projekt-Typ *</label> <select id="f-type" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
+    <option value="Project">Project</option>
+    <option value="Operations">Operations</option>
+    <option value="Internal">Internal</option>
+</select>
 </div>
 <div class="form-row">
 <label>Kunde *</label>
@@ -156,12 +155,10 @@ style="max-width:100%;border-radius:4px;background:#fff">
 {% block scripts %}
 <script>
 let editingId = null;
-// Sortierfeld und -richtung aus localStorage laden, mit Fallback
 let sortField = localStorage.getItem('project_sort_field') || 'sort_order';
-let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1'); // parseInt, da localStorage Strings speichert
+let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1'); 
 let allProjects = [];  
 
-// Farb-Sync
 document.getElementById('f-color')?.addEventListener('input', function() {
 document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
 });  
@@ -175,14 +172,11 @@ document.getElementById('hours-warning').classList.toggle('hidden', t===0 || i+x
 
 function toggleDetails() {
 const show = document.getElementById('show-details').checked;
-// Beachte: Die Spalte 'Liefertermin KW' hat nun keine 'detail-col' Klasse mehr und wird daher
-// von dieser Funktion nicht beeinflusst, bleibt also immer sichtbar.
 document.querySelectorAll('.detail-col').forEach(el => {
 el.style.display = show ? '' : 'none';
 });
 }  
 
-// Funktion zur Aktualisierung der Kalenderwochenanzeige neben den Datumsfeldern
 function updateWeekNumber(dateInputId, weekNumberSpanId) {
 const dateInput = document.getElementById(dateInputId);
 const weekNumberSpan = document.getElementById(weekNumberSpanId);
@@ -191,7 +185,6 @@ weekNumberSpan.textContent = getWeekNumber(dateInput.value);
 }
 }
 
-// Funktion zum Speichern des Filter- und Detailanzeige-Status in localStorage
 function saveFilterState() {
 localStorage.setItem('project_search_term', document.getElementById('search').value.trim());
 localStorage.setItem('project_filter_planned', document.getElementById('f-planned').checked);
@@ -199,7 +192,6 @@ localStorage.setItem('project_filter_done', document.getElementById('f-done').ch
 localStorage.setItem('project_show_details', document.getElementById('show-details').checked);
 }
 
-// Funktion zum Laden des Filter- und Detailanzeige-Status aus localStorage
 function loadFilterState() {
 const searchTerm = localStorage.getItem('project_search_term');
 const filterPlanned = localStorage.getItem('project_filter_planned');
@@ -220,82 +212,62 @@ document.getElementById('show-details').checked = (showDetails === 'true');
 }
 }
 
-
 async function loadProjects() {
-    // 1. Filter-Zustand aus localStorage laden und auf UI anwenden
-    loadFilterState(); // Muss vor dem Auslesen der Filterwerte für den API-Aufruf erfolgen
-
+    loadFilterState();
     const search  = document.getElementById('search').value.trim();
     const planned = document.getElementById('f-planned').checked;
     const showDone = document.getElementById('f-done').checked;  
 
     const params = new URLSearchParams();  
-
-    if (planned) {
-    params.append('planned', 'true');
-    }  
-
-    if (!showDone) { // Wenn "Auch erledigte" NICHT aktiv ist, filtere nach done=false
-    params.append('done', 'false');
-    }  
-
-    if (search) {
-    params.append('search', search);
-    }  
+    if (planned) params.append('planned', 'true');
+    if (!showDone) params.append('done', 'false');
+    if (search) params.append('search', search);
 
     const url = `/api/projects/?${params.toString()}`;  
-
     try {
         const data = await api('GET', url);
         allProjects = data.projects;
-        applySortingAndRender(); // Sortierung nach dem Laden der Daten anwenden
+        applySortingAndRender();
         renderCapSummary(data);
-        // toggleDetails() wird jetzt innerhalb von applySortingAndRender() aufgerufen
     } catch (e) {
         console.error("Fehler beim Laden der Projekte:", e);
     }
 }  
 
-// Funktion, um Sortierfeld zu setzen und dann Sortierung und Rendering auszulösen
 function setAndSort(field) {
 if (sortField === field) sortDir *= -1;
 else { sortField = field; sortDir = 1; }
-localStorage.setItem('project_sort_field', sortField); // Sortierstatus speichern
-localStorage.setItem('project_sort_dir', sortDir);     // Sortierstatus speichern
+localStorage.setItem('project_sort_field', sortField);
+localStorage.setItem('project_sort_dir', sortDir);
 applySortingAndRender();
 }
 
-// Funktion, um den aktuellen Sortierzustand anzuwenden und Projekte zu rendern
 function applySortingAndRender() {
-    let projectsToRender = [...allProjects]; // Kopie erstellen
+    let projectsToRender = [...allProjects];
 
-    if (sortField !== 'sort_order') { // Clientseitige Sortierung anwenden, es sei denn es ist die manuelle Sortierung
+    if (sortField !== 'sort_order') {
         projectsToRender.sort((a,b) => {
             let av = a[sortField];
             let bv = b[sortField];
 
-            // null/undefined Werte für Datumsfelder behandeln, diese werden ans Ende oder den Anfang verschoben
             if (sortField === 'start_date' || sortField === 'due_date') {
-                const dateA = av ? new Date(av).getTime() : (sortDir === 1 ? Infinity : -Infinity); // Infinity/ -Infinity für Sortierung
+                const dateA = av ? new Date(av).getTime() : (sortDir === 1 ? Infinity : -Infinity);
                 const dateB = bv ? new Date(bv).getTime() : (sortDir === 1 ? Infinity : -Infinity);
                 return (dateA - dateB) * sortDir;
             }
 
-            // Allgemeine Vergleichslogik für andere Typen, null/undefined als Leerstring für String-Vergleich behandeln
             av = av === null || av === undefined ? '' : av;
             bv = bv === null || bv === undefined ? '' : bv;
             
             if (typeof av === 'string' && typeof bv === 'string') {
                 return av.localeCompare(bv) * sortDir;
             }
-            // Für Zahlen und Booleans
             return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
         });
     }
     renderProjects(projectsToRender);
-    toggleDetails(); // Details-Sichtbarkeit nach dem Rendern der neuen Zeilen erneut anwenden.
+    toggleDetails();
 }
-
 
 function renderProjects(projects) {
 const tbody = document.getElementById('proj-body');
@@ -307,7 +279,7 @@ ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)"
 <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
 <strong>${p.project_name}</strong>
 </td>
-<td>${p.customer}</td>
+<td><span class="badge" style="font-size:11px; padding:2px 6px; background:var(--background2); border-radius:4px;">${p.project_type}</span></td> <td>${p.customer}</td>
 <td class="detail-col text-dim">${p.jira_id||''}</td>
 <td class="text-mono">${p.target_hours}</td>
 <td class="detail-col text-mono">${p.impl_hours}</td>
@@ -316,7 +288,7 @@ ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)"
 <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
 <td class="detail-col" class="text-dim nowrap">${p.start_date||'–'}</td>
 <td class="detail-col" class="text-dim nowrap">${p.due_date||'–'}</td>
-<td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td> <!-- detail-col entfernt -->
+<td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
 <td class="detail-col">
 <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
 <span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
@@ -359,7 +331,7 @@ ${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.perio
 async function quickUpdate(id, field, val) {
 try {
 await api('PUT', `/api/projects/${id}`, {[field]: val});
-loadProjects(); // Löst das Neuladen und Anwenden der Filter/Sortierung aus
+loadProjects();
 } catch(e) { toast(e.message,'error'); }
 }  
 
@@ -371,6 +343,7 @@ document.getElementById('modal-title').textContent = id ? 'Projekt bearbeiten' :
 if (id) {
 const p = allProjects.find(x => x.project_id === id) || await api('GET', `/api/projects/${id}`);
 document.getElementById('f-name').value    = p.project_name;
+document.getElementById('f-type').value    = p.project_type; // Befüllen des Typs
 document.getElementById('f-customer').value= p.customer;
 document.getElementById('f-jira').value    = p.jira_id||'';
 document.getElementById('f-target').value  = p.target_hours;
@@ -388,6 +361,7 @@ const data = await api('GET', '/api/projects/');
 const suggestedColor = data.suggested_color || '#4A90D9';
 ['f-name','f-customer','f-jira','f-target','f-impl','f-test','f-start','f-due','f-remarks']
 .forEach(id=>document.getElementById(id).value='');
+document.getElementById('f-type').value      = 'Project'; // Default setzen
 document.getElementById('f-planned').checked = true;
 document.getElementById('f-done').checked    = false;
 document.getElementById('f-color').value     = suggestedColor;
@@ -407,6 +381,7 @@ async function saveProject() {
 const al = document.getElementById('modal-alert');
 const payload = {
 project_name: document.getElementById('f-name').value.trim(),
+project_type: document.getElementById('f-type').value, // Payload erweitert
 customer:     document.getElementById('f-customer').value.trim(),
 jira_id:      document.getElementById('f-jira').value.trim()||null,
 target_hours: parseInt(document.getElementById('f-target').value),
@@ -447,7 +422,6 @@ document.getElementById('chart-bar').src = `/api/charts/project_hours_bar?_=${ts
 document.getElementById('chart-cap').src = `/api/charts/capacity_per_week?_=${ts}`;
 }  
 
-// ── Drag & Drop für Sortierung ─────────────────────────────────────────────────
 let dragSrcId = null;  
 
 function dragStart(e) {
@@ -465,7 +439,6 @@ e.preventDefault();
 const targetId = parseInt(e.currentTarget.dataset.id);
 if (dragSrcId === targetId) return;  
 
-// Neue Reihenfolge berechnen
 const ids = [...document.querySelectorAll('#proj-body tr')].map(r => parseInt(r.dataset.id));
 const srcIdx = ids.indexOf(dragSrcId);
 const tgtIdx = ids.indexOf(targetId);
@@ -475,11 +448,10 @@ ids.splice(tgtIdx, 0, dragSrcId);
 const order = ids.map((id, i) => ({project_id: id, sort_order: i}));
 try {
 await api('PUT', '/api/projects/reorder/bulk', order);
-// Nach dem Neuanordnen sollte das Sortierfeld auf 'sort_order' zurückgesetzt werden
 sortField = 'sort_order';
-sortDir = 1; // Standardmäßig aufsteigend für sort_order
-localStorage.setItem('project_sort_field', sortField); // Sortierstatus speichern
-localStorage.setItem('project_sort_dir', sortDir);     // Sortierstatus speichern
+sortDir = 1;
+localStorage.setItem('project_sort_field', sortField);
+localStorage.setItem('project_sort_dir', sortDir);
 loadProjects();
 } catch(e) { toast(e.message,'error'); }
 }  
@@ -495,17 +467,10 @@ const weekNo = Math.ceil((((d - startOfYear) / 86400000) + 1) / 7);
 return 'KW ' + weekNo;
 }  
 
-// Initial load: Filterzustand aus localStorage anwenden, dann Projekte laden
 document.addEventListener('DOMContentLoaded', () => {
     loadProjects();
 });
-
 </script>
 {% endblock %}
-
-							<script>
-                            	
-							</script>
-                        </body>
-                        </html>
-                    
+</body>
+</html>

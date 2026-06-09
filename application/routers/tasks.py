@@ -65,8 +65,27 @@ def list_tasks(project_id: Optional[int] = None):
     return {"tasks": rows, "suggested_color": _next_free_color()}
 
 
+# Hilfsfunktion zur Validierung des Projekttyps (in routers/tasks.py einfügen)
+def _validate_project_type(project_id: Optional[int]):
+    if project_id is None:
+        return
+    with get_cursor() as cur:
+        # Ersetze 'project_type' durch die tatsächliche Spaltenbezeichnung in deiner DB
+        cur.execute("SELECT project_type FROM project WHERE project_id = %s", (project_id,))
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Projekt nicht gefunden")
+        if row["project_type"] not in ["Operations", "Internal"]:
+            raise HTTPException(
+                status_code=422, 
+                detail="Tasks dürfen nur Projekten vom Typ 'Operations' oder 'Internal' zugeordnet werden."
+            )
+
 @router.post("/", status_code=201)
 def create_task(data: TaskBase):
+    # Validierung vor dem Insert
+    _validate_project_type(data.project_id)
+    
     with get_cursor(commit=True) as cur:
         cur.execute("""
             INSERT INTO tasks (project_id, task_name, color_hexcode)
@@ -82,13 +101,21 @@ def update_task(task_id: int, data: TaskUpdate):
         ex = cur.fetchone()
         if not ex:
             raise HTTPException(404, "Task nicht gefunden")
+        
+        # Bestimmen, welche Projekt-ID am Ende gesetzt werden soll
+        target_project_id = data.project_id if data.project_id is not None else ex["project_id"]
+        
+        # Validierung vor dem Update (nur wenn sich das Projekt geändert hat oder neu gesetzt wird)
+        if data.project_id is not None:
+            _validate_project_type(target_project_id)
+
         cur.execute("""
             UPDATE tasks SET
               project_id   = %s,
               task_name    = %s,
               color_hexcode= %s
             WHERE task_id = %s
-        """, (data.project_id   if data.project_id    is not None else ex["project_id"],
+        """, (target_project_id,
               data.task_name    or ex["task_name"],
               data.color_hexcode if data.color_hexcode is not None else ex["color_hexcode"],
               task_id))
