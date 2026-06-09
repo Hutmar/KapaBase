@@ -302,7 +302,7 @@
           <tr>
             <th>Projekt</th>
             <th>Kunde</th>
-            <th>Soll-h</th>
+            <th>Restaufwand</th>
             <th>Liefertermin Soll</th>
             <th>Liefertermin Ist</th>
             <th>Offen Impl</th>
@@ -822,43 +822,47 @@ async function confirmAssign() {
 
 // ── Projektstatus ─────────────────────────────────────────────────────────────
 async function loadProjectStatus() {
-  const rows = await api('GET', '/api/planning/project_status');
-  const colorMap = {
-    red:        ['#E74C3C', 'rgba(231,76,60,0.12)'],
-    green:      ['#2ECC71', 'rgba(46,204,113,0.12)'],
-    lightgreen: ['#7DCEA0', 'rgba(46,204,113,0.06)'],
-    orange:     ['#E67E22', 'rgba(230,126,34,0.12)'],
-  };
-  const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';
+    const rows = await api('GET', '/api/planning/project_status');
 
-  document.getElementById('proj-status-body').innerHTML = rows.map(p => {
-    const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];
-    const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
-    const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;
-    return `<tr style="background:${bgColor}">
-      <td>
-        <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-        <strong>${esc(p.project_name)}</strong>
-      </td>
-      <td class="text-dim">${esc(p.customer)}</td>
-      <td class="text-mono">${p.target_hours}h</td>
-      <td class="text-mono text-dim">${fmtKw(p.due_kw)}</td>
-      <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
-        ${showIst ? fmtKw(p.ist_kw) : '–'}
-      </td>
-      <td class="text-mono" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'}">
-        ${Math.round(p.remaining_impl)}h
-      </td>
-      <td class="text-mono" style="color:${p.remaining_test>0?'var(--danger)':p.remaining_test<0?'#7DCEA0':'var(--accent2)'}">
-        ${Math.round(p.remaining_test)}h
-      </td>
-      <td>
-        <span class="status-pill" style="background:${bgColor};color:${txtColor};border:1px solid ${txtColor}">
-          ${p.remaining_hours>0?'+':''}${Math.round(p.remaining_hours)}h
-        </span>
-      </td>
-    </tr>`;
-  }).join('');
+    // GEÄNDERT: orange entfernt
+    const colorMap = {
+        red:        ['#E74C3C', 'rgba(231,76,60,0.12)'],
+        green:      ['#2ECC71', 'rgba(46,204,113,0.12)'],
+        lightgreen: ['#7DCEA0', 'rgba(46,204,113,0.06)'],
+    };
+    const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';
+
+    document.getElementById('proj-status-body').innerHTML = rows.map(p => {
+        const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];
+
+        // showIst greift jetzt auch für ehemalige orange-Fälle (jetzt lightgreen)
+        const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
+        const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;
+
+        return `<tr style="background:${bgColor}">
+            <td>
+                <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
+                <strong>${esc(p.project_name)}</strong>
+            </td>
+            <td class="text-dim">${esc(p.customer)}</td>
+            <td class="text-mono">${Math.round(p.restaufwand)}h</td>  <!-- GEÄNDERT: war p.target_hours -->
+            <td class="text-mono text-dim">${fmtKw(p.due_kw)}</td>
+            <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
+                ${showIst ? fmtKw(p.ist_kw) : '–'}
+            </td>
+            <td class="text-mono" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'}">
+                ${Math.round(p.remaining_impl)}h
+            </td>
+            <td class="text-mono" style="color:${p.remaining_test>0?'var(--danger)':p.remaining_test<0?'#7DCEA0':'var(--accent2)'}">
+                ${Math.round(p.remaining_test)}h
+            </td>
+            <td>
+                <span class="status-pill" style="background:${bgColor};color:${txtColor};border:1px solid ${txtColor}">
+                    ${p.remaining_hours>0?'+':''}${Math.round(p.remaining_hours)}h
+                </span>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
