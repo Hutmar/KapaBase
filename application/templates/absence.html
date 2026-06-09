@@ -1,4 +1,19 @@
-{% extends "base.html" %}
+
+                        <!DOCTYPE html>
+                        <html lang="en">
+                        <head>
+                            <meta charset="UTF-8">
+                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+							<style>
+								body {
+									background-color: white; /* Ensure the iframe has a white background */
+								}
+
+								
+							</style>
+                        </head>
+                        <body>
+                            {% extends "base.html" %}
 {% block title %}Abwesenheiten – Kapaverwaltung{% endblock %}
 {% block head %}
     {{ super() }}
@@ -18,7 +33,7 @@
     <div style="margin-bottom: 24px;">
         <h2>
             Abwesenheitsübersicht
-            <button id="toggle-summary" class="btn btn-ghost btn-xs" onclick="toggleSummaryTable()">?</button>
+            <button id="toggle-summary" class="btn btn-ghost btn-xs" onclick="toggleSummaryTable()">▼</button>
         </h2>
         <div id="summary-table-container">
             <table style="width: 100%;">
@@ -106,12 +121,15 @@ const STAFF_FILTER_KEY = 'absenceStaffFilter'; // Schlüssel für localStorage
 const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed'; // Schlüssel für localStorage für Collapsible
 
 async function init() {
-    const staff = await api('GET', '/api/staff/');
+    const staffResponse = await api('GET', '/api/staff/'); // Erhalte die gesamte Antwort
+    // Extrahiere die Mitarbeiterliste aus der Antwort
+    const staffMembers = staffResponse.staff_members; 
+    
     const sel = document.getElementById('filter-staff');
     const fSel = document.getElementById('f-staff');
 
     // Filter- und Neuanlage-Mitarbeiter-Dropdowns füllen
-    staff.forEach(s => {
+    staffMembers.forEach(s => { // **Änderung hier: staffMembers.forEach**
         sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
         fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
     });
@@ -132,10 +150,10 @@ async function init() {
     const isCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
     if (isCollapsed) {
         document.getElementById('summary-table-container').style.display = 'none';
-        document.getElementById('toggle-summary').textContent = '?';
+        document.getElementById('toggle-summary').textContent = '►';
     } else {
         document.getElementById('summary-table-container').style.display = ''; // Standardmäßig anzeigen
-        document.getElementById('toggle-summary').textContent = '?';
+        document.getElementById('toggle-summary').textContent = '▼';
     }
 
     // Event-Listener für Kalenderwochen-Anzeige hinzufügen
@@ -179,11 +197,11 @@ function toggleSummaryTable() {
 
     if (isCollapsed) {
         container.style.display = ''; // Anzeigen
-        button.textContent = '?'; // Pfeil nach unten
+        button.textContent = '▼'; // Pfeil nach unten
         localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'false');
     } else {
         container.style.display = 'none'; // Ausblenden
-        button.textContent = '?'; // Pfeil nach rechts
+        button.textContent = '►'; // Pfeil nach rechts
         localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'true');
     }
 }
@@ -199,6 +217,8 @@ async function loadAbsenceSummary() {
 
     let totalVacationAll = 0;
     let totalAbsenceAll = 0;
+    let overallMinAbsenceDate = null; // Speichert das früheste Abwesenheitsdatum teamweit
+    let overallMaxAbsenceDate = null; // Speichert das späteste Abwesenheitsdatum teamweit
 
     if (summary.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden.</td></tr>`;
@@ -215,7 +235,27 @@ async function loadAbsenceSummary() {
             `;
             totalVacationAll += (s.vacation_days || 0);
             totalAbsenceAll += (s.total_absence_days || 0);
+
+            // Aktualisiere das teamweite Minimum-Abwesenheitsdatum
+            if (s.first_absence) {
+                const currentFirstAbsence = new Date(s.first_absence);
+                if (overallMinAbsenceDate === null || currentFirstAbsence < overallMinAbsenceDate) {
+                    overallMinAbsenceDate = currentFirstAbsence;
+                }
+            }
+
+            // Aktualisiere das teamweite Maximum-Abwesenheitsdatum
+            if (s.last_absence) {
+                const currentLastAbsence = new Date(s.last_absence);
+                if (overallMaxAbsenceDate === null || currentLastAbsence > overallMaxAbsenceDate) {
+                    overallMaxAbsenceDate = currentLastAbsence;
+                }
+            }
         });
+
+        // Formatiere die teamweiten Min/Max-Daten für die Anzeige im Footer
+        const formattedMinDate = overallMinAbsenceDate ? overallMinAbsenceDate.toISOString().split('T')[0] : '-';
+        const formattedMaxDate = overallMaxAbsenceDate ? overallMaxAbsenceDate.toISOString().split('T')[0] : '-';
 
         // Summenzeile hinzufügen
         tfoot.innerHTML = `
@@ -223,7 +263,8 @@ async function loadAbsenceSummary() {
                 <th style="text-align: right;">Gesamt:</th>
                 <th>${totalVacationAll}</th>
                 <th>${totalAbsenceAll}</th>
-                <th colspan="2"></th> <!-- Leere Spalten für die Daten -->
+                <th>${formattedMinDate}</th>
+                <th>${formattedMaxDate}</th>
             </tr>
         `;
     }
@@ -248,8 +289,8 @@ async function loadAbsences() {
                 <td><span class="badge" style="background:rgba(74,144,217,0.15);color:#4A90D9">${a.absence_type}</span></td>
                 <td>
                     <div class="flex-gap">
-                        <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">?</button>
-                        <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">?</button>
+                        <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">✎</button>
+                        <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>
                     </div>
                 </td>
             </tr>
@@ -337,3 +378,18 @@ async function deleteAbsence(id) {
 init();
 </script>
 {% endblock %}
+
+							<script>
+                            	const staffResponse = await api('GET', '/api/staff/'); // Erhalte die gesamte Antwort (ein Objekt)
+    const staffMembers = staffResponse.staff_members;      // Greife auf das Array der Mitarbeiter zu
+    
+    // ...
+    staffMembers.forEach(s => { // Iteriere jetzt über das korrekte Array
+        sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
+        fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
+    });
+    // ...
+							</script>
+                        </body>
+                        </html>
+                    
