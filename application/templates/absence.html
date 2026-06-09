@@ -214,6 +214,8 @@ async function loadAbsenceSummary() {
 
     let totalVacationAll = 0;
     let totalAbsenceAll = 0;
+    let overallMinAbsenceDate = null; // Speichert das früheste Abwesenheitsdatum teamweit
+    let overallMaxAbsenceDate = null; // Speichert das späteste Abwesenheitsdatum teamweit
 
     if (summary.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden.</td></tr>`;
@@ -230,7 +232,27 @@ async function loadAbsenceSummary() {
             `;
             totalVacationAll += (s.vacation_days || 0);
             totalAbsenceAll += (s.total_absence_days || 0);
+
+            // Aktualisiere das teamweite Minimum-Abwesenheitsdatum
+            if (s.first_absence) {
+                const currentFirstAbsence = new Date(s.first_absence);
+                if (overallMinAbsenceDate === null || currentFirstAbsence < overallMinAbsenceDate) {
+                    overallMinAbsenceDate = currentFirstAbsence;
+                }
+            }
+
+            // Aktualisiere das teamweite Maximum-Abwesenheitsdatum
+            if (s.last_absence) {
+                const currentLastAbsence = new Date(s.last_absence);
+                if (overallMaxAbsenceDate === null || currentLastAbsence > overallMaxAbsenceDate) {
+                    overallMaxAbsenceDate = currentLastAbsence;
+                }
+            }
         });
+
+        // Formatiere die teamweiten Min/Max-Daten für die Anzeige im Footer
+        const formattedMinDate = overallMinAbsenceDate ? overallMinAbsenceDate.toISOString().split('T')[0] : '-';
+        const formattedMaxDate = overallMaxAbsenceDate ? overallMaxAbsenceDate.toISOString().split('T')[0] : '-';
 
         // Summenzeile hinzufügen
         tfoot.innerHTML = `
@@ -238,7 +260,8 @@ async function loadAbsenceSummary() {
                 <th style="text-align: right;">Gesamt:</th>
                 <th>${totalVacationAll}</th>
                 <th>${totalAbsenceAll}</th>
-                <th colspan="2"></th> <!-- Leere Spalten für die Daten -->
+                <th>${formattedMinDate}</th>
+                <th>${formattedMaxDate}</th>
             </tr>
         `;
     }
