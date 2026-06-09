@@ -26,17 +26,17 @@
 <!-- Filter-Zeile -->
 <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
 <input id="search" placeholder="🔍 Suche (Name, Kunde, Jira)" style="max-width:240px"
-oninput="loadProjects()">
+oninput="saveFilterState(); loadProjects()">
 <label class="flex-gap" style="color:var(--text2)">
-<input type="checkbox" id="f-planned" style="width:auto" onchange="loadProjects()">
+<input type="checkbox" id="f-planned" style="width:auto" onchange="saveFilterState(); loadProjects()">
 Nur geplante
 </label>
 <label class="flex-gap" style="color:var(--text2)">
-<input type="checkbox" id="f-done" style="width:auto" onchange="loadProjects()">
+<input type="checkbox" id="f-done" style="width:auto" onchange="saveFilterState(); loadProjects()">
 Auch erledigte
 </label>
 <label class="flex-gap" style="color:var(--text2)">
-<input type="checkbox" id="show-details" checked style="width:auto" onchange="toggleDetails()">
+<input type="checkbox" id="show-details" checked style="width:auto" onchange="saveFilterState(); toggleDetails()">
 Details anzeigen
 </label>
 </div>  
@@ -60,7 +60,7 @@ Details anzeigen
 <th class="detail-col">Done</th>
 <th class="detail-col" onclick="setAndSort('start_date')">Start ⇅</th>
 <th class="detail-col" onclick="setAndSort('due_date')">Due ⇅</th>
-<th onclick="setAndSort('due_date')">Liefertermin KW ⇅</th> <!-- Sortierung für Liefertermin hinzugefügt -->
+<th onclick="setAndSort('due_date')" class="detail-col">Liefertermin KW ⇅</th> <!-- Added detail-col class -->
 <th class="detail-col">Farbe</th>
 <th>Bemerkung</th>
 <th style="width:100px"></th>
@@ -126,12 +126,12 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <div class="form-row">
 <label>Start-Datum</label>
 <input id="f-start" type="date" onchange="updateWeekNumber('f-start', 'f-start-kw')">
-<span id="f-start-kw" class="text-dim" style="margin-left:8px;font-size:12px;"></span> <!-- KW-Anzeige -->
+<span id="f-start-kw" class="text-dim" style="margin-left:8px;font-size:12px;"></span>
 </div>
 <div class="form-row">
 <label>Due-Datum</label>
 <input id="f-due" type="date" onchange="updateWeekNumber('f-due', 'f-due-kw')">
-<span id="f-due-kw" class="text-dim" style="margin-left:8px;font-size:12px;"></span> <!-- KW-Anzeige -->
+<span id="f-due-kw" class="text-dim" style="margin-left:8px;font-size:12px;"></span>
 </div>
 <div class="form-row">
 <label>Farbe *</label>
@@ -156,8 +156,9 @@ style="max-width:100%;border-radius:4px;background:#fff">
 {% block scripts %}
 <script>
 let editingId = null;
-let sortField = 'sort_order'; // Standard-Sortierfeld
-let sortDir = 1; // 1 für aufsteigend, -1 für absteigend
+// Sortierfeld und -richtung aus localStorage laden, mit Fallback
+let sortField = localStorage.getItem('project_sort_field') || 'sort_order';
+let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1'); // parseInt, da localStorage Strings speichert
 let allProjects = [];  
 
 // Farb-Sync
@@ -188,71 +189,109 @@ weekNumberSpan.textContent = getWeekNumber(dateInput.value);
 }
 }
 
-async function loadProjects() {
-const search  = document.getElementById('search').value.trim();
-const planned = document.getElementById('f-planned').checked;
-const showDone = document.getElementById('f-done').checked;  
-
-const params = new URLSearchParams();  
-
-if (planned) {
-params.append('planned', 'true');
-}  
-
-if (!showDone) { // Wenn "Auch erledigte" NICHT aktiv ist, filtere nach done=false
-params.append('done', 'false');
-}  
-
-if (search) {
-params.append('search', search);
-}  
-
-const url = `/api/projects/?${params.toString()}`;  
-
-try {
-const data = await api('GET', url);
-allProjects = data.projects;
-applySortingAndRender(); // Sortierung nach dem Laden der Daten anwenden
-renderCapSummary(data);
-toggleDetails();
-} catch (e) {
-console.error("Fehler beim Laden der Projekte:", e);
+// Funktion zum Speichern des Filter- und Detailanzeige-Status in localStorage
+function saveFilterState() {
+localStorage.setItem('project_search_term', document.getElementById('search').value.trim());
+localStorage.setItem('project_filter_planned', document.getElementById('f-planned').checked);
+localStorage.setItem('project_filter_done', document.getElementById('f-done').checked);
+localStorage.setItem('project_show_details', document.getElementById('show-details').checked);
 }
+
+// Funktion zum Laden des Filter- und Detailanzeige-Status aus localStorage
+function loadFilterState() {
+const searchTerm = localStorage.getItem('project_search_term');
+const filterPlanned = localStorage.getItem('project_filter_planned');
+const filterDone = localStorage.getItem('project_filter_done');
+const showDetails = localStorage.getItem('project_show_details');
+
+if (searchTerm !== null) {
+document.getElementById('search').value = searchTerm;
+}
+if (filterPlanned !== null) {
+document.getElementById('f-planned').checked = (filterPlanned === 'true');
+}
+if (filterDone !== null) {
+document.getElementById('f-done').checked = (filterDone === 'true');
+}
+if (showDetails !== null) {
+document.getElementById('show-details').checked = (showDetails === 'true');
+}
+}
+
+
+async function loadProjects() {
+    // 1. Filter-Zustand aus localStorage laden und auf UI anwenden
+    loadFilterState(); // Muss vor dem Auslesen der Filterwerte für den API-Aufruf erfolgen
+
+    const search  = document.getElementById('search').value.trim();
+    const planned = document.getElementById('f-planned').checked;
+    const showDone = document.getElementById('f-done').checked;  
+
+    const params = new URLSearchParams();  
+
+    if (planned) {
+    params.append('planned', 'true');
+    }  
+
+    if (!showDone) { // Wenn "Auch erledigte" NICHT aktiv ist, filtere nach done=false
+    params.append('done', 'false');
+    }  
+
+    if (search) {
+    params.append('search', search);
+    }  
+
+    const url = `/api/projects/?${params.toString()}`;  
+
+    try {
+        const data = await api('GET', url);
+        allProjects = data.projects;
+        applySortingAndRender(); // Sortierung nach dem Laden der Daten anwenden
+        renderCapSummary(data);
+        // toggleDetails() wird jetzt innerhalb von applySortingAndRender() aufgerufen
+    } catch (e) {
+        console.error("Fehler beim Laden der Projekte:", e);
+    }
 }  
 
-// Neue Funktion, um Sortierfeld zu setzen und dann Sortierung und Rendering auszulösen
+// Funktion, um Sortierfeld zu setzen und dann Sortierung und Rendering auszulösen
 function setAndSort(field) {
 if (sortField === field) sortDir *= -1;
 else { sortField = field; sortDir = 1; }
+localStorage.setItem('project_sort_field', sortField); // Sortierstatus speichern
+localStorage.setItem('project_sort_dir', sortDir);     // Sortierstatus speichern
 applySortingAndRender();
 }
 
-// Neue Funktion, um den aktuellen Sortierzustand anzuwenden und Projekte zu rendern
+// Funktion, um den aktuellen Sortierzustand anzuwenden und Projekte zu rendern
 function applySortingAndRender() {
-// Nur clientseitig sortieren, wenn nicht nach 'sort_order' sortiert wird (da dies Backend-gesteuert ist für Drag & Drop)
-// Wenn sortField 'sort_order' ist, wird angenommen, dass die Daten bereits vom Backend korrekt sortiert sind
-// oder dass die Reihenfolge durch Drag & Drop festgelegt wurde und nicht überschrieben werden soll.
-if (sortField === 'sort_order') {
-    renderProjects([...allProjects]); // Rendern der Projekte wie sie sind
-} else {
-    const sorted = [...allProjects].sort((a,b) => {
-        const av = a[sortField] || '';
-        const bv = b[sortField] || '';
+    let projectsToRender = [...allProjects]; // Kopie erstellen
 
-        // Behandlung von null/undefinierten Daten für Datumsfelder
-        if (sortField === 'start_date' || sortField === 'due_date') {
-            const dateA = av ? new Date(av).getTime() : -Infinity; // Null-Datum am Ende oder Anfang sortieren
-            const dateB = bv ? new Date(bv).getTime() : -Infinity;
-            return (dateA - dateB) * sortDir;
-        }
+    if (sortField !== 'sort_order') { // Clientseitige Sortierung anwenden, es sei denn es ist die manuelle Sortierung
+        projectsToRender.sort((a,b) => {
+            let av = a[sortField];
+            let bv = b[sortField];
 
-        if (typeof av === 'string' && typeof bv === 'string') {
-            return av.localeCompare(bv) * sortDir;
-        }
-        return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
-    });
-    renderProjects(sorted);
-}
+            // null/undefined Werte für Datumsfelder behandeln, diese werden ans Ende oder den Anfang verschoben
+            if (sortField === 'start_date' || sortField === 'due_date') {
+                const dateA = av ? new Date(av).getTime() : (sortDir === 1 ? Infinity : -Infinity); // Infinity/ -Infinity für Sortierung
+                const dateB = bv ? new Date(bv).getTime() : (sortDir === 1 ? Infinity : -Infinity);
+                return (dateA - dateB) * sortDir;
+            }
+
+            // Allgemeine Vergleichslogik für andere Typen, null/undefined als Leerstring für String-Vergleich behandeln
+            av = av === null || av === undefined ? '' : av;
+            bv = bv === null || bv === undefined ? '' : bv;
+            
+            if (typeof av === 'string' && typeof bv === 'string') {
+                return av.localeCompare(bv) * sortDir;
+            }
+            // Für Zahlen und Booleans
+            return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+        });
+    }
+    renderProjects(projectsToRender);
+    toggleDetails(); // Details-Sichtbarkeit nach dem Rendern der neuen Zeilen erneut anwenden.
 }
 
 
@@ -275,7 +314,7 @@ ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)"
 <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
 <td class="detail-col" class="text-dim nowrap">${p.start_date||'–'}</td>
 <td class="detail-col" class="text-dim nowrap">${p.due_date||'–'}</td>
-<td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
+<td class="detail-col text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td> <!-- Added detail-col class -->
 <td class="detail-col">
 <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
 <span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
@@ -306,7 +345,7 @@ document.getElementById('cap-summary').innerHTML = `
 <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Verfügbare Kapazität</div>
 <div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${Math.round(cap.total_capacity_hours)}</div>
 ${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.period_start} – ${cap.period_end}</div>` : ''}
-<div style="font-size:11px;color:var(--text2)">(${cap.period_length_days} Tage, ${cap.working_days_in_period} Arbeitstage, ${cap.holidays_in_period} Feiertage)</div> <!-- Neu: Anzeige der Metriken -->
+<div style="font-size:11px;color:var(--text2)">(${cap.period_length_days} Tage, ${cap.working_days_in_period} Arbeitstage, ${cap.holidays_in_period} Feiertage)</div>
 </div>
 <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto;border-color:${diff>0?'var(--danger)':'var(--accent2)'}">
 <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Differenz</div>
@@ -318,7 +357,7 @@ ${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.perio
 async function quickUpdate(id, field, val) {
 try {
 await api('PUT', `/api/projects/${id}`, {[field]: val});
-loadProjects(); // Dies wird nun die aktuelle Sortierung korrekt anwenden
+loadProjects(); // Löst das Neuladen und Anwenden der Filter/Sortierung aus
 } catch(e) { toast(e.message,'error'); }
 }  
 
@@ -352,7 +391,6 @@ document.getElementById('f-done').checked    = false;
 document.getElementById('f-color').value     = suggestedColor;
 document.getElementById('f-color-hex').textContent = suggestedColor.toUpperCase();
 }
-// Kalenderwochen für Datumsfelder beim Öffnen des Modals aktualisieren
 updateWeekNumber('f-start', 'f-start-kw');
 updateWeekNumber('f-due', 'f-due-kw');
 
@@ -438,11 +476,12 @@ await api('PUT', '/api/projects/reorder/bulk', order);
 // Nach dem Neuanordnen sollte das Sortierfeld auf 'sort_order' zurückgesetzt werden
 sortField = 'sort_order';
 sortDir = 1; // Standardmäßig aufsteigend für sort_order
+localStorage.setItem('project_sort_field', sortField); // Sortierstatus speichern
+localStorage.setItem('project_sort_dir', sortDir);     // Sortierstatus speichern
 loadProjects();
 } catch(e) { toast(e.message,'error'); }
 }  
 
-// Behält die ursprüngliche getWeekNumber Funktion bei
 function getWeekNumber(dateStr) {
 if (!dateStr) return '–';
 const d = new Date(dateStr);
@@ -454,7 +493,11 @@ const weekNo = Math.ceil((((d - startOfYear) / 86400000) + 1) / 7);
 return 'KW ' + weekNo;
 }  
 
-loadProjects();
+// Initial load: Filterzustand aus localStorage anwenden, dann Projekte laden
+document.addEventListener('DOMContentLoaded', () => {
+    loadProjects();
+});
+
 </script>
 {% endblock %}
 
