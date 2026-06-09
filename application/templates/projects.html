@@ -60,7 +60,7 @@ Details anzeigen
 <th class="detail-col">Done</th>
 <th class="detail-col" onclick="setAndSort('start_date')">Start ⇅</th>
 <th class="detail-col" onclick="setAndSort('due_date')">Due ⇅</th>
-<th onclick="setAndSort('due_date')" class="detail-col">Liefertermin KW ⇅</th> <!-- Added detail-col class -->
+<th onclick="setAndSort('due_date')">Liefertermin KW ⇅</th> <!-- detail-col entfernt -->
 <th class="detail-col">Farbe</th>
 <th>Bemerkung</th>
 <th style="width:100px"></th>
@@ -175,6 +175,8 @@ document.getElementById('hours-warning').classList.toggle('hidden', t===0 || i+x
 
 function toggleDetails() {
 const show = document.getElementById('show-details').checked;
+// Beachte: Die Spalte 'Liefertermin KW' hat nun keine 'detail-col' Klasse mehr und wird daher
+// von dieser Funktion nicht beeinflusst, bleibt also immer sichtbar.
 document.querySelectorAll('.detail-col').forEach(el => {
 el.style.display = show ? '' : 'none';
 });
@@ -314,7 +316,7 @@ ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)"
 <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
 <td class="detail-col" class="text-dim nowrap">${p.start_date||'–'}</td>
 <td class="detail-col" class="text-dim nowrap">${p.due_date||'–'}</td>
-<td class="detail-col text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td> <!-- Added detail-col class -->
+<td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td> <!-- detail-col entfernt -->
 <td class="detail-col">
 <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
 <span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
