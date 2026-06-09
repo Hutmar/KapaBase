@@ -68,14 +68,16 @@ def list_absences(shortname: Optional[str] = None):
 def get_absence_summary(shortname: Optional[str] = None):
     """
     Gibt eine Übersicht über Abwesenheitstage pro Mitarbeiter zurück.
-    Umfasst Urlaubstage und gesamte Abwesenheitstage.
+    Umfasst Urlaubstage, gesamte Abwesenheitstage sowie erste und letzte Abwesenheit.
     """
     with get_cursor() as cur:
         query = """
             SELECT
                 shortname,
                 SUM(CASE WHEN absence_type = 'Urlaub' THEN (absence_to - absence_from + 1) ELSE 0 END) AS vacation_days,
-                SUM(absence_to - absence_from + 1) AS total_absence_days
+                SUM(absence_to - absence_from + 1) AS total_absence_days,
+                MIN(absence_from) AS first_absence,
+                MAX(absence_to) AS last_absence
             FROM
                 absence
         """
@@ -139,4 +141,3 @@ def delete_absence(absence_id: int):
     """Abwesenheit löschen."""
     with get_cursor(commit=True) as cur:
         cur.execute("DELETE FROM absence WHERE absence_id = %s", (absence_id,))
-        

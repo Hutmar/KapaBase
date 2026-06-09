@@ -15,6 +15,13 @@
                         <body>
                             {% extends "base.html" %}
 {% block title %}Abwesenheiten – Kapaverwaltung{% endblock %}
+{% block head %}
+    {{ super() }}
+    <!-- Favicon -->
+    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <!-- Oder, falls du ein PNG verwendest: -->
+    <!-- <link rel="icon" href="/static/favicon.png" type="image/png"> -->
+{% endblock %}
 {% block content %}
 <div class="card">
     <div class="card-header">
@@ -24,22 +31,29 @@
 
     <!-- Neue Abwesenheitsübersichtstabelle -->
     <div style="margin-bottom: 24px;">
-        <h2>Abwesenheitsübersicht</h2>
-        <table style="width: 100%;">
-            <thead>
-                <tr>
-                    <th>Mitarbeiter</th>
-                    <th>Urlaubstage</th>
-                    <th>Gesamte Abwesenheitstage</th>
-                </tr>
-            </thead>
-            <tbody id="absence-summary-body">
-                <!-- Zusammenfassende Zeilen werden hier eingefügt -->
-            </tbody>
-            <tfoot id="absence-summary-footer">
-                <!-- Summenzeile wird hier eingefügt -->
-            </tfoot>
-        </table>
+        <h2>
+            Abwesenheitsübersicht
+            <button id="toggle-summary" class="btn btn-ghost btn-xs" onclick="toggleSummaryTable()">▼</button>
+        </h2>
+        <div id="summary-table-container">
+            <table style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>Mitarbeiter</th>
+                        <th>Urlaubstage</th>
+                        <th>Gesamte Abwesenheitstage</th>
+                        <th>Erste Abwesenheit</th>
+                        <th>Letzte Abwesenheit</th>
+                    </tr>
+                </thead>
+                <tbody id="absence-summary-body">
+                    <!-- Zusammenfassende Zeilen werden hier eingefügt -->
+                </tbody>
+                <tfoot id="absence-summary-footer">
+                    <!-- Summenzeile wird hier eingefügt -->
+                </tfoot>
+            </table>
+        </div>
     </div>
 
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
@@ -104,6 +118,7 @@
 <script>
 let editingId = null;
 const STAFF_FILTER_KEY = 'absenceStaffFilter'; // Schlüssel für localStorage
+const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed'; // Schlüssel für localStorage für Collapsible
 
 async function init() {
     const staff = await api('GET', '/api/staff/');
@@ -127,6 +142,16 @@ async function init() {
     // Abwesenheiten und Zusammenfassung basierend auf dem (wiederhergestellten) Filter laden
     loadAbsences();
     loadAbsenceSummary();
+    
+    // Zustand der Übersichtstabelle wiederherstellen
+    const isCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
+    if (isCollapsed) {
+        document.getElementById('summary-table-container').style.display = 'none';
+        document.getElementById('toggle-summary').textContent = '►';
+    } else {
+        document.getElementById('summary-table-container').style.display = ''; // Standardmäßig anzeigen
+        document.getElementById('toggle-summary').textContent = '▼';
+    }
 
     // Event-Listener für Kalenderwochen-Anzeige hinzufügen
     document.getElementById('f-from').addEventListener('change', updateCalendarWeek);
@@ -136,8 +161,8 @@ async function init() {
 function filterStaffChanged() {
     const selectedStaff = document.getElementById('filter-staff').value;
     localStorage.setItem(STAFF_FILTER_KEY, selectedStaff); // Filter in localStorage speichern
-    loadAbsences();
-    loadAbsenceSummary(); // Zusammenfassung basierend auf Filter aktualisieren
+    loadAbsences(); // Hauptliste aktualisieren (die nun filtert)
+    // Die Zusammenfassungstabelle wird NICHT gefiltert, daher kein Aufruf hier.
 }
 
 function getCalendarWeek(dateString) {
@@ -161,9 +186,26 @@ function updateCalendarWeek(event) {
     document.getElementById(cwElementId).textContent = `(KW ${getCalendarWeek(inputElement.value)})`;
 }
 
+// Funktion zum Ein-/Ausklappen der Übersichtstabelle
+function toggleSummaryTable() {
+    const container = document.getElementById('summary-table-container');
+    const button = document.getElementById('toggle-summary');
+    const isCollapsed = container.style.display === 'none';
+
+    if (isCollapsed) {
+        container.style.display = ''; // Anzeigen
+        button.textContent = '▼'; // Pfeil nach unten
+        localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'false');
+    } else {
+        container.style.display = 'none'; // Ausblenden
+        button.textContent = '►'; // Pfeil nach rechts
+        localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'true');
+    }
+}
+
 async function loadAbsenceSummary() {
-    const staffFilter = document.getElementById('filter-staff').value;
-    const url = staffFilter ? `/api/absence/summary?shortname=${staffFilter}` : `/api/absence/summary`;
+    // Die Zusammenfassungstabelle wird NICHT gefiltert.
+    const url = `/api/absence/summary`; // Kein shortname-Parameter mehr
     const summary = await api('GET', url);
     const tbody = document.getElementById('absence-summary-body');
     const tfoot = document.getElementById('absence-summary-footer');
@@ -174,7 +216,7 @@ async function loadAbsenceSummary() {
     let totalAbsenceAll = 0;
 
     if (summary.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="3" style="text-align: center;">${staffFilter ? 'Keine Abwesenheitsdaten für diesen Mitarbeiter.' : 'Keine Abwesenheitsdaten vorhanden.'}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden.</td></tr>`;
     } else {
         summary.forEach(s => {
             tbody.innerHTML += `
@@ -182,6 +224,8 @@ async function loadAbsenceSummary() {
                     <td class="text-mono">${s.shortname}</td>
                     <td>${s.vacation_days || 0}</td>
                     <td>${s.total_absence_days || 0}</td>
+                    <td>${s.first_absence || '-'}</td>
+                    <td>${s.last_absence || '-'}</td>
                 </tr>
             `;
             totalVacationAll += (s.vacation_days || 0);
@@ -194,6 +238,7 @@ async function loadAbsenceSummary() {
                 <th style="text-align: right;">Gesamt:</th>
                 <th>${totalVacationAll}</th>
                 <th>${totalAbsenceAll}</th>
+                <th colspan="2"></th> <!-- Leere Spalten für die Daten -->
             </tr>
         `;
     }
@@ -208,7 +253,7 @@ async function loadAbsences() {
     absenceBody.innerHTML = ''; // Bestehende Zeilen löschen
 
     if (rows.length === 0) {
-        absenceBody.innerHTML = `<tr><td colspan="5" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus.'}</td></tr>`;
+        absenceBody.innerHTML = `<tr><td colspan="5" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
     } else {
         absenceBody.innerHTML = rows.map(a => `
             <tr>
