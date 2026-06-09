@@ -11,7 +11,6 @@ from psycopg2 import IntegrityError
 
 router = APIRouter()
 
-
 # ── Pydantic-Modelle ───────────────────────────────────────────────────────────
 
 class StaffCreate(BaseModel):
@@ -22,14 +21,12 @@ class StaffCreate(BaseModel):
     is_active: bool = True
     roles: List[str] = []                 # z. B. ['Developer', 'Tester']
 
-
 class StaffUpdate(BaseModel):
     hours_per_week: Optional[Decimal] = None
     hours_per_day: Optional[Decimal] = None   # manuell gesetzt → remark Pflicht
     remark: Optional[str] = None
     is_active: Optional[bool] = None
     roles: Optional[List[str]] = None
-
 
 # ── Hilfsfunktion ──────────────────────────────────────────────────────────────
 
@@ -39,14 +36,15 @@ def _sync_roles(cur, shortname: str, target_roles: List[str]):
     Existierende Rollen bleiben unberührt. Neue werden hinzugefügt.
     Gelöschte Rollen werden einzeln entfernt und bei Constraint-Verletzung abgefangen.
     """
+
     # 1. Aktuelle Rollen aus der DB holen
     cur.execute("SELECT role FROM roles WHERE shortname = %s", (shortname,))
     current_roles = [row["role"] if isinstance(row, dict) else row[0] for row in cur.fetchall()]
-    
+
     # Sets für den einfachen Abgleich erstellen
     target_set = set(target_roles)
     current_set = set(current_roles)
-    
+
     # 2. Rollen bestimmen, die hinzugefügt werden müssen
     roles_to_add = target_set - current_set
     for role in roles_to_add:
@@ -54,16 +52,16 @@ def _sync_roles(cur, shortname: str, target_roles: List[str]):
             "INSERT INTO roles (shortname, role) VALUES (%s, %s)",
             (shortname, role)
         )
-        
+
     # 3. Rollen bestimmen, die gelöscht werden müssen
     roles_to_delete = current_set - target_set
     for role in roles_to_delete:
         try:
-            # Nutze einen SAVEPOINT, da ein fehlgeschlagenes DELETE in PostgreSQL 
+            # Nutze einen SAVEPOINT, da ein fehlgeschlagenes DELETE in PostgreSQL
             # sonst die gesamte laufende Transaktion ungültig macht!
             cur.execute(f"SAVEPOINT role_delete_{role}")
             cur.execute(
-                "DELETE FROM roles WHERE shortname = %s AND role = %s", 
+                "DELETE FROM roles WHERE shortname = %s AND role = %s",
                 (shortname, role)
             )
             cur.execute(f"RELEASE SAVEPOINT role_delete_{role}")
@@ -75,35 +73,48 @@ def _sync_roles(cur, shortname: str, target_roles: List[str]):
                 detail=f"Die Rolle '{role}' kann nicht entfernt werden, da sie noch an anderer Stelle verwendet wird."
             )
 
-
 # ── Endpunkte ──────────────────────────────────────────────────────────────────
 
 @router.get("/")
 def list_staff():
-    """Alle Mitarbeiter mit ihren Rollen zurückgeben."""
+    """Alle Mitarbeiter mit ihren Rollen zurückgeben, inklusive summierter Stunden."""
     with get_cursor() as cur:
         cur.execute("""
             SELECT s.shortname, s.hours_per_week, s.hours_per_day,
-                   s.remark, s.is_active,
-                   COALESCE(
-                       json_agg(r.role ORDER BY r.role)
-                       FILTER (WHERE r.role IS NOT NULL), '[]'
-                   ) AS roles
+            s.remark, s.is_active,
+            COALESCE(
+                json_agg(r.role ORDER BY r.role)
+                FILTER (WHERE r.role IS NOT NULL), '[]'
+            ) AS roles
             FROM staff s
             LEFT JOIN roles r ON r.shortname = s.shortname
             GROUP BY s.shortname, s.hours_per_week, s.hours_per_day,
-                     s.remark, s.is_active
+            s.remark, s.is_active
             ORDER BY s.shortname
         """)
-        return cur.fetchall()
+        staff_data = cur.fetchall()
 
+        total_hpd_active = Decimal('0.00')
+        # Summiere hours_per_day nur für aktive Mitarbeiter
+        for s in staff_data:
+            if s["is_active"] and s["hours_per_day"] is not None:
+                total_hpd_active += s["hours_per_day"]
+
+        total_hpw_calculated = total_hpd_active * Decimal('5') # Teamwoche = Teamtag * 5
+
+        return {
+            "staff_members": staff_data,
+            "total_hours_per_day": str(total_hpd_active.quantize(Decimal('0.01'))), # Auf 2 Dezimalstellen formatieren
+            "total_hours_per_week": str(total_hpw_calculated.quantize(Decimal('0.01'))) # Auf 2 Dezimalstellen formatieren
+        }
 
 @router.post("/", status_code=201)
 def create_staff(data: StaffCreate):
     """Neuen Mitarbeiter anlegen."""
+
     # hours_per_day berechnen falls nicht angegeben
     hpd = data.hours_per_day if data.hours_per_day is not None \
-          else round(data.hours_per_week / Decimal("5"), 2)
+        else round(data.hours_per_week / Decimal("5"), 2)
 
     # Wenn hours_per_day manuell gesetzt → remark Pflicht
     if data.hours_per_day is not None and not data.remark:
@@ -120,7 +131,6 @@ def create_staff(data: StaffCreate):
 
     return {"shortname": data.shortname}
 
-
 @router.put("/{shortname}")
 def update_staff(shortname: str, data: StaffUpdate):
     """Mitarbeiter aktualisieren."""
@@ -133,10 +143,10 @@ def update_staff(shortname: str, data: StaffUpdate):
 
         # Neue Werte ermitteln
         new_hpw = data.hours_per_week if data.hours_per_week is not None \
-                  else existing["hours_per_week"]
+            else existing["hours_per_week"]
         new_remark = data.remark if data.remark is not None else existing["remark"]
         new_active = data.is_active if data.is_active is not None \
-                     else existing["is_active"]
+            else existing["is_active"]
 
         # 1. Hat der User explizit Stunden pro Tag eingegeben?
         if data.hours_per_day is not None:
@@ -158,20 +168,20 @@ def update_staff(shortname: str, data: StaffUpdate):
         cur.execute("""
             UPDATE staff
             SET hours_per_week = %s, hours_per_day = %s,
-                remark = %s, is_active = %s
+            remark = %s, is_active = %s
             WHERE shortname = %s
         """, (new_hpw, new_hpd, new_remark, new_active, shortname))
 
         if data.roles is not None:
             _sync_roles(cur, shortname, data.roles)
 
-    return {"shortname": shortname}
-
+        return {"shortname": shortname}
 
 @router.delete("/{shortname}", status_code=204)
 def delete_staff(shortname: str):
     """Mitarbeiter löschen (nur wenn keine Referenzen bestehen)."""
     with get_cursor(commit=True) as cur:
+
         # Prüfen ob Referenzen bestehen
         cur.execute("SELECT COUNT(*) as cnt FROM absence WHERE shortname = %s", (shortname,))
         if cur.fetchone()["cnt"] > 0:
