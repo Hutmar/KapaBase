@@ -428,6 +428,54 @@ function initSections() {
     applySectionState('task-section', 'task-toggle');
 }  
 
+// --- WICHTIG: Angepasste `api`-Funktion zur Handhabung verschiedener Content-Typen ---
+// Diese Funktion muss existieren und korrekt arbeiten.
+// Ich nehme an, sie ist hier definiert oder wird von hier aus angepasst.
+async function api(method, url, body = null, expectedResponseContentType = 'application/json') {
+    const options = {
+        method: method,
+        headers: {
+            'Content-Type': 'application/json' // Default für den Request-Body (wenn JSON gesendet wird)
+        }
+    };
+
+    if (body) {
+        options.body = JSON.stringify(body);
+    }
+
+    const response = await fetch(url, options);
+
+    // Fehlerhafte HTTP-Antworten (z.B. 4xx, 5xx) behandeln
+    if (!response.ok) {
+        let errorData = { message: `HTTP Error ${response.status} - ${response.statusText}` };
+        try {
+            // Versuche, die Fehlerantwort zuerst als JSON zu parsen (FastAPI sendet Fehler oft als JSON)
+            const errorText = await response.text();
+            if (errorText) {
+                if (response.headers.get('Content-Type')?.includes('application/json')) {
+                    errorData = JSON.parse(errorText);
+                } else {
+                    // Wenn es kein JSON ist, verwende den Roh-Text als Detail
+                    errorData.detail = errorText;
+                }
+            }
+        } catch (e) {
+            console.error("Fehler beim Parsen der Fehlerantwort:", e);
+        }
+        // Wirf einen Fehler, der vom aufrufenden Code abgefangen werden kann (z.B. toast())
+        throw new Error(errorData.detail || errorData.message || "Unbekannter Fehler");
+    }
+
+    // Erfolgreiche HTTP-Antworten (200 OK) basierend auf dem erwarteten Content-Type behandeln
+    if (expectedResponseContentType === 'text/xml' || expectedResponseContentType === 'image/svg+xml') {
+        return await response.text(); // Gib den Roh-Text für SVG zurück
+    } else {
+        // Standardmäßig JSON-Parsing für andere erfolgreiche Antworten
+        return await response.json();
+    }
+}
+
+
 // ── Daten laden ────────────────────────────────────────────────────────────────
 async function loadPlanning() {
     const useCurrent = document.getElementById('use-current-week').checked;
@@ -945,7 +993,7 @@ async function showForecast() {
     openForecastModal(); // Modal sofort öffnen, damit Ladeanzeige sichtbar ist
 
     try {
-        // 1. Forecast-Daten vom Backend abrufen
+        // 1. Forecast-Daten vom Backend abrufen (erwartet JSON)
         const forecastData = await api('GET', `/api/forecast/data?num_projects=${numProjects}`);
 
         if (!forecastData || !forecastData.projects || forecastData.projects.length === 0) {
@@ -954,9 +1002,9 @@ async function showForecast() {
             return;
         }
 
-        // 2. Chart-Rendering-Endpunkt aufrufen (POST, um große Daten im Body zu senden)
-        // Antwort ist direkt das SVG-Markup
-        const chartSvg = await api('POST', '/api/charts/forecast_burndown_chart', forecastData, 'text/xml'); 
+        // 2. Chart-Rendering-Endpunkt aufrufen (erwartet SVG/XML)
+        // WICHTIG: expectedResponseContentType ist jetzt 'image/svg+xml'
+        const chartSvg = await api('POST', '/api/charts/forecast_burndown_chart', forecastData, 'image/svg+xml'); 
 
         forecastChartContainer.innerHTML = chartSvg; // SVG direkt einfügen
 
