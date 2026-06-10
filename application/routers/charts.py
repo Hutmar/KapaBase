@@ -1,281 +1,356 @@
 """
-routers/charts.py – Diagramm-Endpunkte (Matplotlib, Headless/Agg)
-Alle Diagramme werden serverseitig als SVG gerendert und per StreamingResponse ausgeliefert.
-"""
-import io
-import logging
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.ticker import MaxNLocator
+routers/forecast.py – Endpunkte für den Liefertermin-Forecast
 
-from fastapi import APIRouter, Query, HTTPException
-from fastapi.responses import StreamingResponse
-from typing import Optional
+Trennung von Berechnung (hier) und Rendering (charts.py).
+"""
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
+from typing import Optional, List, Dict
 from datetime import date, timedelta
 
 from db import get_cursor
-from capacity import calculate_capacity_per_week, calculate_total_capacity
-from routers.forecast import ForecastResponse
+from capacity import iso_week_key, get_austrian_holidays
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 # ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 
-def _fig_to_svg(fig) -> StreamingResponse:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="svg", bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="image/svg+xml")
+def _week_bounds(week_key: str):
+    """Gibt (Montag, Freitag) der ISO-Kalenderwoche zurück."""
+    year, week = int(week_key.split("-W")[0]), int(week_key.split("-W")[1])
+    monday = date.fromisocalendar(year, week, 1)
+    friday = monday + timedelta(days=4)
+    return monday, friday
 
 
-def _fig_to_png(fig) -> StreamingResponse:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
-    plt.close(fig)
-    buf.seek(0)
-    return StreamingResponse(buf, media_type="image/png")
+def _absent_workdays_in_week(shortname: str, week_key: str,
+                              absences: list, at_hols: set) -> int:
+    monday, friday = _week_bounds(week_key)
+    absent_days = set()
+    for ab in absences:
+        if ab["shortname"] != shortname:
+            continue
+        cur = max(ab["absence_from"], monday)
+        end = min(ab["absence_to"], friday)
+        while cur <= end:
+            if cur.weekday() < 5 and cur not in at_hols:
+                absent_days.add(cur)
+            cur += timedelta(days=1)
+    return len(absent_days)
 
 
-# ── Kapazitäts-Liniendiagramm pro KW ──────────────────────────────────────────
-
-@router.get("/capacity_per_week")
-def chart_capacity_per_week(
-    start_date: Optional[date] = None,
-    end_date:   Optional[date] = None,
-):
-    """Liniendiagramm: Kapazität (Stunden) pro Kalenderwoche."""
-    if start_date is None:
-        start_date = date.today()
-    if end_date is None:
-        end_date = start_date + timedelta(weeks=12)
-
-    data   = calculate_capacity_per_week(start_date, end_date)
-    weeks  = data["weeks"]
-    totals = [data["totals"].get(w, 0) for w in weeks]
-
-    fig, ax = plt.subplots(figsize=(max(8, len(weeks) * 0.5), 4))
-    ax.plot(range(len(weeks)), totals, marker="o", color="#4A90D9", linewidth=2)
-    ax.fill_between(range(len(weeks)), totals, alpha=0.15, color="#4A90D9")
-    ax.set_xticks(range(len(weeks)))
-    ax.set_xticklabels([w.replace("-W", "\nKW") for w in weeks],
-                       rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel("Stunden")
-    ax.set_title("Verfügbare Kapazität pro Kalenderwoche")
-    ax.grid(axis="y", alpha=0.4)
-    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-    fig.tight_layout()
-    return _fig_to_svg(fig)
+def _total_workdays_in_week(week_key: str, at_hols: set) -> int:
+    monday, friday = _week_bounds(week_key)
+    count = 0
+    cur = monday
+    while cur <= friday:
+        if cur.weekday() < 5 and cur not in at_hols:
+            count += 1
+        cur += timedelta(days=1)
+    return count
 
 
-# ── Burn-Down-Chart für ein einzelnes Projekt ──────────────────────────────────
+def _effective_hours_in_week(shortname: str, hours_per_day: float,
+                              week_key: str, absences: list, at_hols: set) -> float:
+    total  = _total_workdays_in_week(week_key, at_hols)
+    absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
+    return max(0.0, (total - absent) * float(hours_per_day))
 
-@router.get("/burndown/{project_id}")
-def chart_burndown(project_id: int):
-    """Burn-Down-Chart: Soll-Restaufwand vs. geleistete Stunden über die Zeit."""
+
+def _build_at_hols(start: date, end: date) -> set:
+    years = set(range(start.year, end.year + 1))
+    hols: set = set()
+    for y in years:
+        hols |= get_austrian_holidays(y)
+    return hols
+
+
+# ── Pydantic-Modelle ───────────────────────────────────────────────────────────
+
+class ForecastProject(BaseModel):
+    project_id:    int
+    project_name:  str
+    color_hexcode: Optional[str] = None
+    due_date:      Optional[date] = None
+
+
+class BurndownPoint(BaseModel):
+    week_key:        str
+    remaining_total: float
+
+
+class ForecastResponse(BaseModel):
+    projects:      List[ForecastProject]
+    weeks:         List[str]                          # Alle Wochen inkl. Vorwoche als Startpunkt
+    burndown_data: Dict[str, List[BurndownPoint]]     # key = str(project_id)
+
+
+# ── Kalkulationslogik ──────────────────────────────────────────────────────────
+
+def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> ForecastResponse:
+    """
+    Reine Berechnungsfunktion – kein Rendering.
+    Gibt strukturierte Burndown-Daten zurück.
+    """
     with get_cursor() as cur:
-        cur.execute("SELECT * FROM project WHERE project_id=%s", (project_id,))
-        proj = cur.fetchone()
-        if not proj:
-            return StreamingResponse(io.BytesIO(b""), media_type="image/svg+xml")
 
+        # 1. Projekte laden (type='Project', planned, not done), nach due_date sortiert
         cur.execute("""
-            SELECT day, impl_hours, test_hours
-            FROM worked_hours
-            WHERE project_id=%s ORDER BY day ASC
-        """, (project_id,))
-        worked = cur.fetchall()
-
-    target = proj["target_hours"]
-    days, cumulative = [], []
-    cum = 0
-    for w in worked:
-        cum += w["impl_hours"] + w["test_hours"]
-        days.append(str(w["day"]))
-        cumulative.append(target - cum)
-
-    if days:
-        steps = len(days)
-        ideal = [target - (target / steps * i) for i in range(steps)]
-    else:
-        days       = ["Keine Daten"]
-        cumulative = [target]
-        ideal      = [target]
-
-    fig, ax = plt.subplots(figsize=(max(8, len(days) * 0.5), 4))
-    ax.plot(range(len(days)), ideal,      linestyle="--", color="#AAAAAA", label="Ideal")
-    ax.plot(range(len(days)), cumulative, marker="o",    color="#E74C3C", linewidth=2,
-            label="Restaufwand")
-    ax.set_xticks(range(len(days)))
-    ax.set_xticklabels(days, rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel("Verbleibende Stunden")
-    ax.set_title(f"Burn-Down: {proj['project_name']}")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.4)
-    fig.tight_layout()
-    return _fig_to_svg(fig)
-
-
-# ── Tortendiagramm: Kapazitätsverteilung nach Mitarbeiter ─────────────────────
-
-@router.get("/capacity_pie")
-def chart_capacity_pie(
-    start_date: Optional[date] = None,
-    end_date:   Optional[date] = None,
-):
-    if start_date is None:
-        start_date = date.today()
-    if end_date is None:
-        end_date = start_date + timedelta(weeks=12)
-
-    cap      = calculate_total_capacity(start_date, end_date)
-    by_staff = cap["by_staff"]
-    if not by_staff:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "Keine Daten", ha="center", va="center")
-        return _fig_to_svg(fig)
-
-    labels = list(by_staff.keys())
-    sizes  = list(by_staff.values())
-
-    fig, ax = plt.subplots(figsize=(6, 6))
-    ax.pie(sizes, labels=labels, autopct="%1.0f%%", startangle=90)
-    ax.set_title(f"Kapazitätsverteilung\n{start_date} – {end_date}")
-    fig.tight_layout()
-    return _fig_to_svg(fig)
-
-
-# ── Balkendiagramm: Soll vs. Ist pro Projekt ──────────────────────────────────
-
-@router.get("/project_hours_bar")
-def chart_project_hours_bar():
-    """Balkendiagramm: Planstunden vs. geleistete Stunden je aktivem Projekt."""
-    with get_cursor() as cur:
-        cur.execute("""
-            SELECT p.project_name, p.target_hours,
-                   COALESCE(SUM(wh.impl_hours + wh.test_hours), 0) AS worked
+            SELECT p.project_id, p.project_name, p.color_hexcode,
+                   p.impl_hours  AS plan_impl,
+                   p.test_hours  AS plan_test,
+                   p.due_date
             FROM project p
-            LEFT JOIN worked_hours wh ON wh.project_id = p.project_id
-            WHERE p.planned = TRUE AND p.done = FALSE
-            GROUP BY p.project_id, p.project_name, p.target_hours
-            ORDER BY p.sort_order, p.project_name
+            WHERE p.planned = TRUE AND p.done = FALSE AND p.project_type = 'Project'
+            ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
+            LIMIT %s
+        """, (num_projects,))
+        raw_projects = cur.fetchall()
+
+        if not raw_projects:
+            return ForecastResponse(projects=[], weeks=[], burndown_data={})
+
+        project_ids = [p["project_id"] for p in raw_projects]
+
+        # 2. Geleistete Stunden je Projekt
+        cur.execute("""
+            SELECT project_id,
+                   COALESCE(SUM(impl_hours), 0) AS worked_impl,
+                   COALESCE(SUM(test_hours), 0) AS worked_test
+            FROM worked_hours
+            WHERE project_id = ANY(%s)
+            GROUP BY project_id
+        """, (project_ids,))
+        worked_map = {r["project_id"]: r for r in cur.fetchall()}
+
+        # 3. Aktiven Staff (Developer + Tester) laden
+        cur.execute("""
+            SELECT s.shortname, s.hours_per_day, r.role
+            FROM staff s
+            JOIN roles r ON r.shortname = s.shortname
+            WHERE r.role IN ('Developer', 'Tester') AND s.is_active = TRUE
         """)
-        rows = cur.fetchall()
+        staff_rows = cur.fetchall()
+        all_shortnames = list({r["shortname"] for r in staff_rows})
 
-    if not rows:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "Keine aktiven Projekte", ha="center", va="center")
-        return _fig_to_svg(fig)
-
-    names   = [r["project_name"] for r in rows]
-    targets = [r["target_hours"] for r in rows]
-    worked  = [int(r["worked"]) for r in rows]
-    x = range(len(names))
-
-    fig, ax = plt.subplots(figsize=(max(6, len(names) * 1.2), 5))
-    ax.bar([i - 0.2 for i in x], targets, 0.35, label="Planstunden",
-           color="#4A90D9", alpha=0.85)
-    ax.bar([i + 0.2 for i in x], worked,  0.35, label="Geleistet",
-           color="#2ECC71", alpha=0.85)
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(names, rotation=30, ha="right", fontsize=9)
-    ax.set_ylabel("Stunden")
-    ax.set_title("Planstunden vs. geleistete Stunden")
-    ax.legend()
-    ax.grid(axis="y", alpha=0.4)
-    fig.tight_layout()
-    return _fig_to_svg(fig)
+        today = date.today()
+        # Prognosezeitraum: Von (heute - 1 Woche) bis (heute + forecast_weeks_duration + Puffer)
+        forecast_start_date_for_hols = today - timedelta(weeks=1)
+        forecast_end_date_for_hols   = today + timedelta(weeks=forecast_weeks_duration + 2) # Extra Puffer für Feiertage
 
 
-# ── Forecast Burndown-Chart ────────────────────────────────────────────────────
+        # 4. Abwesenheiten für den Prognosezeitraum
+        cur.execute("""
+            SELECT shortname, absence_from, absence_to, absence_type
+            FROM absence
+            WHERE shortname = ANY(%s)
+              AND absence_to   >= %s
+              AND absence_from <= %s
+        """, (all_shortnames, forecast_start_date_for_hols, forecast_end_date_for_hols))
+        absences = [dict(a) for a in cur.fetchall()]
 
-@router.post("/forecast_burndown_chart")
-def chart_forecast_burndown(forecast_data: ForecastResponse):
-    """
-    Rendering-Endpunkt für den Liefertermin-Forecast.
-    Empfängt vorberechnete Burndown-Daten (aus /api/forecast/data)
-    und liefert ein SVG-Liniendiagramm zurück.
+    # Ab hier: reine Python-Berechnung, kein Cursor mehr nötig
 
-    Trennung von Kalkulation (forecast.py) und Rendering (hier).
-    """
+    at_hols = _build_at_hols(forecast_start_date_for_hols, forecast_end_date_for_hols)
+
+    # ── Restaufwand pro Projekt ermitteln ──────────────────────────────────────
+    projects_data: List[ForecastProject] = []
+    initial_remaining_impl: Dict[int, float] = {}
+    initial_remaining_test: Dict[int, float] = {}
+
+    for p_row in raw_projects:
+        pid    = p_row["project_id"]
+        worked = worked_map.get(pid, {"worked_impl": 0, "worked_test": 0})
+
+        rem_impl = max(0.0, float(p_row["plan_impl"]) - float(worked["worked_impl"]))
+        rem_test = max(0.0, float(p_row["plan_test"]) - float(worked["worked_test"]))
+
+        # Nur Projekte mit verbleibendem Aufwand berücksichtigen
+        if rem_impl + rem_test > 0:
+            projects_data.append(ForecastProject(
+                project_id=pid,
+                project_name=p_row["project_name"],
+                color_hexcode=p_row["color_hexcode"],
+                due_date=p_row["due_date"],
+            ))
+            initial_remaining_impl[pid] = rem_impl
+            initial_remaining_test[pid] = rem_test
+
+    if not projects_data:
+        return ForecastResponse(projects=[], weeks=[], burndown_data={})
+
+    # ── Wochenliste aufbauen ───────────────────────────────────────────────────
+    # Erzeugt eine Liste von Wochen, beginnend eine Woche vor 'today'
+    # und inklusive 'forecast_weeks_duration' weitere Wochen.
+    # Total: forecast_weeks_duration + 1 Wochen für den Plot.
+    all_plot_weeks_full_range: List[str] = []
+    current_date_iterator = today - timedelta(weeks=1) # Start für den ersten Datenpunkt (Ist-Zustand)
+    for _ in range(forecast_weeks_duration + 1): # Generiert N+1 Wochen für plotting
+        all_plot_weeks_full_range.append(iso_week_key(current_date_iterator))
+        current_date_iterator += timedelta(weeks=1)
+
+    # Die Wochen, in denen tatsächlich Arbeit verplant wird (exkl. der ersten Ist-Woche)
+    forecast_active_weeks = all_plot_weeks_full_range[1:]
+
+
+    # ── Wöchentliche Kapazität pro Rolle berechnen ─────────────────────────────
+    # NEUE LOGIK: 20% der Teamkapazität für Wartung reservieren
+    MAINTENANCE_RESERVATION_PERCENT = 0.20 # 20%
+
+    weekly_dev_cap:  Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
+    weekly_test_cap: Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
+
+    for sr in staff_rows:
+        role      = sr["role"]
+        shortname = sr["shortname"]
+        hpd       = float(sr["hours_per_day"])
+        for wk in forecast_active_weeks:
+            # Effektive Stunden pro Mitarbeiter nach Abwesenheit/Feiertagen
+            h = _effective_hours_in_week(shortname, hpd, wk, absences, at_hols)
+            if role == "Developer":
+                weekly_dev_cap[wk]  += h
+            elif role == "Tester":
+                weekly_test_cap[wk] += h
     
-    logger.error("DEBUG: chart_forecast_burndown wurde aufgerufen.")
+    # Kapazität für Wartung abziehen
+    for wk in forecast_active_weeks:
+        weekly_dev_cap[wk]  = max(0.0, weekly_dev_cap[wk]  * (1 - MAINTENANCE_RESERVATION_PERCENT))
+        weekly_test_cap[wk] = max(0.0, weekly_test_cap[wk] * (1 - MAINTENANCE_RESERVATION_PERCENT))
 
-    try:
-        if not forecast_data.projects:
-            fig, ax = plt.subplots()
-            ax.text(0.5, 0.5, "Keine Forecast-Daten verfügbar", ha="center", va="center")
-            return _fig_to_svg(fig)
 
-        # X-Achse aus den tatsächlichen Burndown-Punkten des ersten Projekts ableiten.
-        # Das ist robuster als forecast_data.weeks direkt zu verwenden, weil
-        # die Datenpunkte (inkl. Vorwoche) und die weeks-Liste garantiert übereinstimmen.
-        first_pid_str    = str(forecast_data.projects[0].project_id)
-        first_bp_list    = forecast_data.burndown_data.get(first_pid_str, [])
-        plot_weeks       = [bp.week_key for bp in first_bp_list]
+    # ── Vorwärtsrechnung (Simulation) ──────────────────────────────────────────
+    # Kapazitätsgrenzen pro Projekt pro Woche (max. 3 Dev / 1 Tester)
+    MAX_DEV_PER_PROJECT  = 3 * 5 * 8.0   # 3 Entwickler × 5 Tage × 8 h
+    MAX_TEST_PER_PROJECT = 1 * 5 * 8.0   # 1 Tester    × 5 Tage × 8 h
 
-        # Fallback, falls burndown_data leer ist
-        if not plot_weeks:
-            plot_weeks = forecast_data.weeks
+    current_impl = {p.project_id: initial_remaining_impl[p.project_id] for p in projects_data}
+    current_test = {p.project_id: initial_remaining_test[p.project_id] for p in projects_data}
 
-        num_weeks = len(plot_weeks)
-        if num_weeks == 0:
-            fig, ax = plt.subplots()
-            ax.text(0.5, 0.5, "Keine Wochen-Daten verfügbar", ha="center", va="center")
-            return _fig_to_svg(fig)
+    burndown_data_full_range: Dict[str, List[BurndownPoint]] = {
+        str(p.project_id): [] for p in projects_data
+    }
 
-        fig, ax = plt.subplots(figsize=(max(10, num_weeks * 0.45), 6))
+    # Initialer Punkt (erste Woche in all_plot_weeks_full_range) = Ausgangslage (Ist-Zustand)
+    # Zu diesem Zeitpunkt wurde noch keine Kapazität abgezogen.
+    for proj in projects_data:
+        pid_str = str(proj.project_id)
+        burndown_data_full_range[pid_str].append(BurndownPoint(
+            week_key=all_plot_weeks_full_range[0], # The 'Ist' week
+            remaining_total=(
+                initial_remaining_impl[proj.project_id]
+                + initial_remaining_test[proj.project_id]
+            ),
+        ))
 
-        for proj in forecast_data.projects:
-            pid_str          = str(proj.project_id)
-            burndown_points  = forecast_data.burndown_data.get(pid_str, [])
-            remaining_hours  = [bp.remaining_total for bp in burndown_points]
+    # Simulation über die *aktiven Forecast-Wochen* (ab heute), in denen Kapazität verbraucht wird
+    last_week_any_project_active: Optional[str] = None # Tracks the latest week any project still has remaining work
 
-            # Längenprüfung: Serienlänge muss mit X-Achse übereinstimmen
-            if not remaining_hours:
+    for wk_index, wk in enumerate(forecast_active_weeks):
+        avail_dev  = weekly_dev_cap.get(wk, 0.0) # Bereits um Wartung reduziert
+        avail_test = weekly_test_cap.get(wk, 0.0) # Bereits um Wartung reduziert
+
+        # Projekte in Liefertermin-Reihenfolge abarbeiten (Priorität: früheste Due-Date)
+        for proj in projects_data:
+            pid = proj.project_id
+            rem_total = current_impl.get(pid, 0.0) + current_test.get(pid, 0.0)
+            # If a project was already finished, it remains finished.
+            if rem_total <= 0:
                 continue
-            if len(remaining_hours) != num_weeks:
-                # Auffüllen mit 0 oder kürzen – sollte durch forecast.py nicht auftreten
-                remaining_hours = remaining_hours[:num_weeks]
-                while len(remaining_hours) < num_weeks:
-                    remaining_hours.append(0.0)
 
-            ax.plot(
-                range(num_weeks),
-                remaining_hours,
-                color=proj.color_hexcode or "#555555",
-                marker="o",
-                markersize=4,
-                linewidth=2,
-                label=proj.project_name,
-            )
+            needed_dev  = min(current_impl.get(pid, 0.0), MAX_DEV_PER_PROJECT)
+            needed_test = min(current_test.get(pid, 0.0), MAX_TEST_PER_PROJECT)
 
-        # X-Achse: KW-Labels (Vorwoche wird als "KW XX (Ist)" markiert)
-        x_labels = []
-        for i, wk in enumerate(plot_weeks):
-            kw_num = int(wk.split("-W")[1])
-            label  = f"KW {kw_num}" if i > 0 else f"KW {kw_num}\n(Ist)"
-            x_labels.append(label)
+            # Allocate capacity from available pool
+            alloc_dev  = min(needed_dev,  avail_dev)
+            alloc_test = min(needed_test, avail_test)
 
-        ax.set_xticks(range(num_weeks))
-        ax.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=8)
-        ax.set_ylabel("Restaufwand (Stunden)")
-        ax.set_xlabel("Kalenderwoche")
-        ax.set_title("Liefertermin Forecast – Burndown")
-        ax.grid(axis="y", alpha=0.4)
-        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax.set_ylim(bottom=0)
+            avail_dev  -= alloc_dev
+            avail_test -= alloc_test
 
-        # Legende rechts außerhalb des Plot-Bereichs
-        ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5),
-                  fontsize="small", frameon=True, framealpha=0.8)
+            current_impl[pid] = max(0.0, current_impl.get(pid, 0.0) - alloc_dev)
+            current_test[pid] = max(0.0, current_test.get(pid, 0.0) - alloc_test)
+            
+            # If this project is *still active* (has remaining work) AFTER allocation this week,
+            # then this week is the last active week seen so far.
+            if current_impl[pid] > 0 or current_test[pid] > 0:
+                last_week_any_project_active = wk
 
-        fig.tight_layout(rect=[0, 0, 0.82, 1])
-        return _fig_to_svg(fig)
-    except Exception as e:
-        logger.exception("Fehler beim Erstellen des Forecast Burndown Charts")
-        raise HTTPException(status_code=500, detail=f"Chart-Erstellung fehlgeschlagen: {e}")
+        # Record burndown point for this week for all projects
+        for proj in projects_data:
+            pid_str = str(proj.project_id)
+            remaining = current_impl.get(proj.project_id, 0.0) + current_test.get(proj.project_id, 0.0)
+            burndown_data_full_range[pid_str].append(BurndownPoint(
+                week_key=wk,
+                remaining_total=remaining,
+            ))
+        
+        # Check if all projects are finished at this point in the simulation
+        all_finished_this_week = all(
+            (current_impl.get(p.project_id, 0.0) + current_test.get(p.project_id, 0.0)) <= 0
+            for p in projects_data
+        )
+        if all_finished_this_week:
+            # If all projects are finished this week, then no need to track last_week_any_project_active further.
+            # It should already be set to the last week where *any* work was done.
+            # Fill remaining active forecast weeks with 0 for all projects to ensure consistent series length
+            for future_wk_index in range(wk_index + 1, len(forecast_active_weeks)):
+                future_wk = forecast_active_weeks[future_wk_index]
+                for proj in projects_data:
+                    burndown_data_full_range[str(proj.project_id)].append(
+                        BurndownPoint(week_key=future_wk, remaining_total=0.0)
+                    )
+            break # Stop simulation early because all projects are finished
+
+    # ── Final time range adjustment ────────────────────────────────────────────
+    # Determine the actual number of weeks to display in the plot.
+    # This will be up to the last week where any project was still active, plus a small buffer.
+    
+    final_num_weeks_to_display = len(all_plot_weeks_full_range) # Default to full range
+
+    if last_week_any_project_active:
+        try:
+            # Find the index of the last week where any project was still active
+            last_active_idx_in_full_range = all_plot_weeks_full_range.index(last_week_any_project_active)
+            
+            # Include this week and a small buffer (e.g., 2 additional weeks) for visual context
+            # but don't exceed the original full range.
+            target_idx = min(last_active_idx_in_full_range + 2, len(all_plot_weeks_full_range) - 1)
+            final_num_weeks_to_display = target_idx + 1 # +1 because index is 0-based
+        except ValueError:
+            # This should ideally not happen if last_week_any_project_active is correctly derived
+            pass
+    
+    # Ensure at least a minimum number of weeks are always displayed, e.g., 5 weeks,
+    # even if all projects finish very quickly or started with no work.
+    MIN_DISPLAY_WEEKS = 5
+    if final_num_weeks_to_display < MIN_DISPLAY_WEEKS and len(all_plot_weeks_full_range) >= MIN_DISPLAY_WEEKS:
+        final_num_weeks_to_display = MIN_DISPLAY_WEEKS
+
+    # Truncate weeks and burndown data to the final display range
+    final_weeks = all_plot_weeks_full_range[:final_num_weeks_to_display]
+    truncated_burndown_data: Dict[str, List[BurndownPoint]] = {}
+
+    for proj_id_str, points in burndown_data_full_range.items():
+        # Ensure that each project's data is also truncated to the final_num_weeks_to_display
+        truncated_burndown_data[proj_id_str] = points[:final_num_weeks_to_display]
+    
+    return ForecastResponse(
+        projects=projects_data,
+        weeks=final_weeks,
+        burndown_data=truncated_burndown_data,
+    )
+
+
+# ── API-Endpunkt ───────────────────────────────────────────────────────────────
+
+@router.get("/data", response_model=ForecastResponse)
+def get_forecast_data(
+    num_projects:            int = Query(5,  ge=1, description="Anzahl Projekte für den Forecast"),
+    forecast_weeks_duration: int = Query(52, ge=1, description="Forecast-Horizont in Wochen"),
+):
+    """
+    Liefert die Burndown-Rohdaten für den Forecast.
+    Rendering erfolgt separat in charts.py.
+    """
+    return calculate_forecast(num_projects, forecast_weeks_duration)
