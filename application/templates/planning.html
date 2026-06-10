@@ -3,234 +3,237 @@
 
 {% block content %}
 <style>
-/* Bestehende Styles */
+/* Bestehende Styles (unverändert oder kleinere Anpassungen) */
 #planning-header-wrap {
-position: sticky;
-top: 52px;
-z-index: 20;
-background: var(--bg2);
-border-bottom: 2px solid var(--border);
-overflow-x: hidden;
+    position: sticky;
+    top: 52px;
+    z-index: 20;
+    background: var(--bg2);
+    border-bottom: 2px solid var(--border);
+    overflow-x: hidden;
 }
 #planning-body-wrap {
-overflow-x: auto;
-margin-bottom: 24px;
+    overflow-x: auto;
+    margin-bottom: 24px;
 }
 .planning-header-table,
 .planning-body-table {
-border-collapse: separate;
-border-spacing: 0;
-font-size: 12px;
-table-layout: auto;
-min-width: max-content;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    table-layout: auto;
+    min-width: max-content;
 }
 .planning-header-table tr.month-row th {
-background: var(--bg2);
-font-size: 11px;
-font-weight: 600;
-color: var(--accent);
-height: 24px;
-line-height: 24px;
-padding: 0 8px;
-text-align: center;
-white-space: nowrap;
-border-bottom: 1px solid var(--border);
-box-sizing: border-box;
+    background: var(--bg2);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    height: 24px;
+    line-height: 24px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+    box-sizing: border-box;
 }
 .planning-header-table tr.month-row th.staff-col {
-text-align: left;
-border-bottom: none;
+    text-align: left;
+    border-bottom: none;
 }
 .planning-header-table tr.kw-row th {
-background: var(--bg3);
-font-size: 10px;
-font-weight: 500;
-height: 28px;
-line-height: 28px;
-padding: 0 8px;
-text-align: center;
-white-space: nowrap;
-min-width: 90px;
-box-sizing: border-box;
+    background: var(--bg3);
+    font-size: 10px;
+    font-weight: 500;
+    height: 28px;
+    line-height: 28px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    min-width: 90px;
+    box-sizing: border-box;
 }
 .planning-header-table tr.kw-row th.staff-col {
-min-width: 150px;
-text-align: left;
+    min-width: 150px;
+    text-align: left;
 }
 .kw-header-current {
-color: var(--accent) !important;
-border-bottom: 2px solid var(--accent) !important;
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
 }
 .planning-body-table td.staff-name {
-position: sticky;
-left: 0;
-background: var(--bg2);
-z-index: 5;
-border-right: 1px solid var(--border);
-white-space: nowrap;
-padding: 5px 10px;
-font-weight: 500;
-min-width: 150px;
-box-sizing: border-box;
+    position: sticky;
+    left: 0;
+    background: var(--bg2);
+    z-index: 5;
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    padding: 5px 10px;
+    font-weight: 500;
+    min-width: 150px;
+    box-sizing: border-box;
 }
 .planning-body-table td {
-padding: 3px 4px;
-border: 1px solid rgba(42,48,80,0.3);
-min-width: 90px;
-height: 36px;
-vertical-align: middle;
-text-align: center;
-cursor: default;
-position: relative;
-box-sizing: border-box;
+    padding: 3px 4px;
+    border: 1px solid rgba(42,48,80,0.3);
+    min-width: 90px;
+    height: 36px;
+    vertical-align: middle;
+    text-align: center;
+    cursor: default;
+    position: relative;
+    box-sizing: border-box;
 }
 .planning-body-table td.droptarget { cursor: copy; }
 .planning-body-table td.droptarget:hover {
-outline: 2px solid var(--accent);
-outline-offset: -2px;
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
 }
 /* Abwesenheit / Vergangenheit / gesperrt */
 .absent-cell {
-background: repeating-linear-gradient(
--45deg,
-rgba(42,48,80,0.55), rgba(42,48,80,0.55) 4px,
-rgba(30,35,54,0.55) 4px, rgba(30,35,54,0.55) 8px
-) !important;
-cursor: not-allowed !important;
-color: var(--text2);
-font-size: 10px;
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(42,48,80,0.55), rgba(42,48,80,0.55) 4px,
+        rgba(30,35,54,0.55) 4px, rgba(30,35,54,0.55) 8px
+    ) !important;
+    cursor: not-allowed !important;
+    color: var(--text2);
+    font-size: 10px;
 }
 .past-cell {
-background: repeating-linear-gradient(
--45deg,
-rgba(30,35,54,0.7), rgba(30,35,54,0.7) 4px,
-rgba(20,24,40,0.7) 4px, rgba(20,24,40,0.7) 8px
-) !important;
-cursor: not-allowed !important;
-color: var(--text2);
-font-size: 10px;
-opacity: 0.6;
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(30,35,54,0.7), rgba(30,35,54,0.7) 4px,
+        rgba(20,24,40,0.7) 4px, rgba(20,24,40,0.7) 8px
+    ) !important;
+    cursor: not-allowed !important;
+    color: var(--text2);
+    font-size: 10px;
+    opacity: 0.6;
 }
 .partial-absent-cell {
-background: repeating-linear-gradient(
--45deg,
-rgba(42,48,80,0.2), rgba(42,48,80,0.2) 4px,
-transparent 4px, transparent 8px
-);
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(42,48,80,0.2), rgba(42,48,80,0.2) 4px,
+        transparent 4px, transparent 8px
+    );
 }
 /* Planungs-Chip */
 .planning-cell {
-display: inline-flex;
-align-items: center;
-justify-content: center;
-border-radius: 3px;
-padding: 2px 5px;
-font-size: 10px;
-font-weight: 600;
-white-space: nowrap;
-overflow: hidden;
-text-overflow: ellipsis;
-max-width: 82px;
-height: 26px;
-user-select: none;
-position: relative;
-vertical-align: middle;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 82px;
+    height: 26px;
+    user-select: none;
+    position: relative;
+    vertical-align: middle;
 }
 .planning-cell .remove-btn {
-display: none;
-position: absolute;
-top: -5px; right: -5px;
-background: var(--danger);
-color: #fff;
-border: none;
-border-radius: 50%;
-width: 14px; height: 14px;
-font-size: 9px;
-cursor: pointer;
-align-items: center;
-justify-content: center;
-line-height: 1;
-z-index: 3;
-padding: 0;
+    display: none;
+    position: absolute;
+    top: -5px; right: -5px;
+    background: var(--danger);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 14px; height: 14px;
+    font-size: 9px;
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    z-index: 3;
+    padding: 0;
 }
 .planning-body-table td:hover .remove-btn { display: flex; }
 .planning-cell.outdated {
-opacity: 0.45;
-text-decoration: line-through;
-filter: grayscale(60%);
+    opacity: 0.45;
+    text-decoration: line-through;
+    filter: grayscale(60%);
 }
 /* Kapazitäts-Summen-Zeile */
 .cap-row td {
-background: var(--bg3);
-font-family: var(--font-mono);
-font-size: 11px;
-color: var(--text2);
-text-align: center;
-font-weight: 600;
-border-top: 2px solid var(--border);
+    background: var(--bg3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text2);
+    text-align: center;
+    font-weight: 600;
+    border-top: 2px solid var(--border);
 }
-/* Drag-Quellen */
+/* Drag-Quellen - Diese Styles werden jetzt nicht mehr verwendet, könnten entfernt werden */
 .drag-source {
-display: flex;
-align-items: center;
-gap: 8px;
-padding: 6px 10px;
-border-radius: var(--radius);
-border: 1px solid var(--border);
-margin-bottom: 4px;
-cursor: grab;
-font-size: 12px;
-user-select: none;
-transition: border-color 0.12s, background 0.12s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    margin-bottom: 4px;
+    cursor: grab;
+    font-size: 12px;
+    user-select: none;
+    transition: border-color 0.12s, background 0.12s;
 }
 .drag-source:hover  { border-color: var(--accent); background: var(--bg3); }
 .drag-source:active { cursor: grabbing; opacity: 0.65; }
 .drag-source .dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-/* Einklappbare Sektionen */
+
+/* Einklappbare Sektionen - diese Styles bleiben, obwohl die Abschnitte entfernt wurden */
+/* Sie könnten für andere zukünftige Sektionen relevant sein */
 .section-header {
-display: flex;
-align-items: center;
-justify-content: space-between;
-cursor: pointer;
-user-select: none;
-padding: 2px 0 8px 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    user-select: none;
+    padding: 2px 0 8px 0;
 }
 .section-header:hover h2 { color: var(--accent); }
 .section-toggle { font-size: 11px; color: var(--text2); transition: transform 0.15s; }
 .section-toggle.collapsed { transform: rotate(-90deg); }
 .section-body { overflow: hidden; transition: max-height 0.2s ease; }
+
 /* Status-Tabelle */
 .proj-status-table td { padding: 6px 10px; font-size: 12px; }
 .status-pill {
-display: inline-block;
-padding: 2px 8px;
-border-radius: 20px;
-font-size: 11px;
-font-weight: 600;
-font-family: var(--font-mono);
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-mono);
 }
 /* Click-Zuweisung Dropdown */
 .cell-dropdown {
-position: absolute;
-top: 100%;
-left: 0;
-z-index: 50;
-background: var(--bg2);
-border: 1px solid var(--border);
-border-radius: var(--radius);
-min-width: 180px;
-max-height: 220px;
-overflow-y: auto;
-box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 180px;
+    max-height: 220px;
+    overflow-y: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
 }
 .cell-dropdown-item {
-display: flex;
-align-items: center;
-gap: 8px;
-padding: 6px 10px;
-cursor: pointer;
-font-size: 12px;
-border-bottom: 1px solid rgba(42,48,80,0.3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(42,48,80,0.3);
 }
 .cell-dropdown-item:hover { background: var(--bg3); }
 .cell-dropdown-item:last-child { border-bottom: none; }
@@ -254,45 +257,78 @@ border-bottom: 1px solid rgba(42,48,80,0.3);
     align-items: center;
     justify-content: center;
 }
+
+/* Neue Styles für den zentrierten Filterbereich */
+.centered-filter-container {
+    display: flex;
+    justify-content: center; /* Zentriert den Inhalt horizontal */
+    width: 100%; /* Nimmt die volle Breite ein */
+    padding: 16px 0; /* Etwas Paddinng oben/unten */
+}
+.filter-box {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap; /* Erlaubt Umbruch auf kleinere Bildschirmen */
+    justify-content: center; /* Zentriert die Elemente innerhalb der Box */
+}
+/* Style für das Suchfeld im Planungsstatus */
+.status-search-box {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg3);
+    color: var(--text);
+    font-size: 13px;
+    width: 100%; /* Volle Breite im Container */
+    box-sizing: border-box; /* Padding wird in die Breite eingerechnet */
+    margin-bottom: 10px; /* Abstand zur Tabelle */
+}
 </style>  
 
 <!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
 <div class="card" style="padding-bottom:0">
     <div class="card-header" style="padding-bottom:16px">
         <h1>Ressourcenplanung</h1>
-        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-            <label class="flex-gap text-dim" style="font-size:12px">
-                <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadPlanning()">
-                Ab aktueller KW starten
-            </label>
-            <label class="flex-gap text-dim" style="font-size:12px">
-                <input type="checkbox" id="use-end-week" style="width:auto" onchange="toggleEndWeek()">
-                Bis KW:
-                <select id="end-week-select" style="width:110px" disabled onchange="loadPlanning()">
-                    <option value="">– wählen –</option>
-                </select>
-            </label>
-            <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
-
-            <!-- NEUER FORECAST-BEREICH -->
-            <div style="border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; display: flex; align-items: center; gap: 10px;">
+        <!-- Geänderter Filterbereich -->
+        <div class="centered-filter-container">
+            <div class="filter-box">
                 <label class="flex-gap text-dim" style="font-size:12px">
-                    Anzahl Projekte:
-                    <select id="forecast-project-count" style="width:70px">
-                        <option value="1">1</option>
-                        <option value="2">2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option> <!-- NEU: 4 -->
-                        <option value="5" selected>5</option>
-                        <option value="6">6</option> <!-- NEU: 6 -->
-                        <option value="7">7</option> <!-- NEU: 7 -->
-                        <option value="8">8</option> <!-- NEU: 8 -->
-                        <option value="9">9</option> <!-- NEU: 9 -->
-                        <option value="10">10</option>
-                        <option value="999">Alle</option>
+                    <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadPlanning()">
+                    Ab aktueller KW starten
+                </label>
+                <label class="flex-gap text-dim" style="font-size:12px">
+                    <input type="checkbox" id="use-end-week" style="width:auto" onchange="toggleEndWeek()">
+                    Bis KW:
+                    <select id="end-week-select" style="width:110px" disabled onchange="loadPlanning()">
+                        <option value="">– wählen –</option>
                     </select>
                 </label>
-                <button class="btn btn-primary btn-sm" id="show-forecast-btn">Forecast</button>
+                <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
+
+                <!-- Forecast-Bereich bleibt hier, da er auch ein Filter/Tool ist -->
+                <div style="margin-left: 20px; border-left: 1px solid var(--border); padding-left: 20px;">
+                    <label class="flex-gap text-dim" style="font-size:12px">
+                        Anzahl Projekte:
+                        <select id="forecast-project-count" style="width:70px">
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5" selected>5</option>
+                            <option value="6">6</option>
+                            <option value="7">7</option>
+                            <option value="8">8</option>
+                            <option value="9">9</option>
+                            <option value="10">10</option>
+                            <option value="999">Alle</option>
+                        </select>
+                    </label>
+                    <button class="btn btn-primary btn-sm" id="show-forecast-btn">Forecast</button>
+                </div>
             </div>
         </div>
     </div>  
@@ -309,51 +345,27 @@ border-bottom: 1px solid rgba(42,48,80,0.3);
     </div>
 </div>  
 
-<!-- ── Drag-Quellen + Projektstatus ──────────────────────────────────────── -->
-<div style="display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start;margin-top:20px">  
-    <div>
-        <!-- Tasks (einklappbar) -->
-        <div class="card">
-            <div class="section-header" onclick="toggleSection('task-section','task-toggle')">
-                <h2>Tasks</h2>
-                <span class="section-toggle" id="task-toggle">▼</span>
-            </div>
-            <div class="section-body" id="task-section">
-                <div id="task-drag-list"></div>
-            </div>
-        </div>
-        <!-- Projekte (einklappbar) -->
-        <div class="card">
-            <div class="section-header" onclick="toggleSection('proj-section','proj-toggle')">
-                <h2>Projekte</h2>
-                <span class="section-toggle" id="proj-toggle">▼</span>
-            </div>
-            <div class="section-body" id="proj-section">
-                <div id="proj-drag-list"></div>
-            </div>
-        </div>
-    </div>  
-
-    <!-- Planungsstatus -->
-    <div class="card">
-        <h2>Planungsstatus</h2>
-        <div style="overflow-x:auto">
-            <table class="proj-status-table" style="width:100%">
-                <thead>
-                    <tr>
-                        <th>Projekt</th>
-                        <th>Kunde</th>
-                        <th>Restaufwand</th>
-                        <th>Liefertermin Soll</th>
-                        <th>Liefertermin Ist</th>
-                        <th>Offen Impl</th>
-                        <th>Offen Test</th>
-                        <th>Offen Gesamt</th>
-                    </tr>
-                </thead>
-                <tbody id="proj-status-body"></tbody>
-            </table>
-        </div>
+<!-- ── Geänderter Bereich für Projektstatus (Full Width) ─────────────────── -->
+<div class="card" style="margin-top:20px">
+    <h2>Planungsstatus</h2>
+    <!-- Suchfeld für Planungsstatus -->
+    <input type="text" id="project-status-search" class="status-search-box" placeholder="Suche Projektname oder Kunde..." oninput="filterProjectStatus()">
+    <div style="overflow-x:auto">
+        <table class="proj-status-table" style="width:100%">
+            <thead>
+                <tr>
+                    <th>Projekt</th>
+                    <th>Kunde</th>
+                    <th>Restaufwand</th>
+                    <th>Liefertermin Soll</th>
+                    <th>Liefertermin Ist</th>
+                    <th>Offen Impl</th>
+                    <th>Offen Test</th>
+                    <th>Offen Gesamt</th>
+                </tr>
+            </thead>
+            <tbody id="proj-status-body"></tbody>
+        </table>
     </div>
 </div>  
 
@@ -396,19 +408,25 @@ border-bottom: 1px solid rgba(42,48,80,0.3);
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
 let planningData = null;
-let dragPayload  = null;   // {type, id, name, color}
+let dragPayload  = null;   // {type, id, name, color} - Drag & Drop entfernt, aber Payload-Struktur beibehalten für Klick-Zuweisung
 let assignTarget = null;   // für Modal-Rollenauswahl
 let openDropdownCell = null; // aktuell geöffnete Zelle für Click-Dropdown  
+let _dropdownItems = [];   // Speichert die Liste der Projekt/Task-Items für das Dropdown
+let _dropdownSearchTerm = ''; // Aktueller Suchterm für das Dropdown
+let _dropdownSearchTimeout = null; // Timeout für das Zurücksetzen des Suchterms
+let _allProjectStatusRows = []; // Speichert die ungefilterten Projektstatus-Zeilen
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];  
 
 // ── Einklapp-Zustand (Session-persistent via JS-Variable) ─────────────────────
-// true = offen, false = eingeklappt; Default: offen
+// Die Sektionen "Tasks" und "Projekte" wurden entfernt, diese Funktionen werden daher nicht mehr benötigt.
+// Sie bleiben als Platzhalter für zukünftige Erweiterungen, falls gewünscht.
 const sectionState = { 'proj-section': true, 'task-section': true };  
 
 function toggleSection(sectionId, toggleId) {
     const sec  = document.getElementById(sectionId);
     const tog  = document.getElementById(toggleId);
+    if (!sec || !tog) return; // Stellen sicher, dass die Elemente existieren
     const open = !sectionState[sectionId];   // umschalten
     sectionState[sectionId] = open;
     applySectionState(sectionId, toggleId);
@@ -419,7 +437,7 @@ function applySectionState(sectionId, toggleId) {
     const tog  = document.getElementById(toggleId);
     if (!sec || !tog) return;
     if (sectionState[sectionId]) {
-        sec.style.maxHeight = sec.scrollHeight + 500 + 'px';
+        sec.style.maxHeight = sec.scrollHeight + 500 + 'px'; // Max-Height anpassen, falls nötig
         tog.classList.remove('collapsed');
     } else {
         sec.style.maxHeight = '0px';
@@ -427,15 +445,13 @@ function applySectionState(sectionId, toggleId) {
     }
 }  
 
-// Nach jedem Render: Zustände anwenden (ohne den Zustand zu verändern)
+// Diese Funktion wird nicht mehr aktiv verwendet, da die Sektionen entfernt wurden.
 function initSections() {
-    applySectionState('proj-section', 'proj-toggle');
-    applySectionState('task-section', 'task-toggle');
+    // applySectionState('proj-section', 'proj-toggle');
+    // applySectionState('task-section', 'task-toggle');
 }  
 
-// --- WICHTIG: Angepasste `api`-Funktion zur Handhabung verschiedener Content-Typen ---
-// Diese Funktion muss existieren und korrekt arbeiten.
-// Ich nehme an, sie ist hier definiert oder wird von hier aus angepasst.
+// --- `api`-Funktion zur Handhabung verschiedener Content-Typen (unverändert) ---
 async function api(method, url, body = null, expectedResponseContentType = 'application/json') {
     const options = {
         method: method,
@@ -506,12 +522,12 @@ async function loadPlanning() {
     try { renderMatrix(); }
     catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); return; }  
 
-    renderDragSources();
-    loadProjectStatus();
-    setTimeout(initSections, 50);
+    // renderDragSources() wird nicht mehr aufgerufen, da Drag & Drop entfernt wurde.
+    loadProjectStatus(); // Ruft initial den Projektstatus und filtert ihn
+    // initSections() wird nicht mehr aktiv verwendet, da Sektionen entfernt wurden.
 }  
 
-// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Filter)
+// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Beschränkung)
 let _allWeeks = null;
 async function ensureEndWeekDropdown(selectedVal) {
     if (!_allWeeks || _allWeeks.length === 0) {
@@ -735,8 +751,8 @@ function renderMatrix() {
 
             // data-attrs für Klick-Zuweisung
             row += `<td class="droptarget${partialClass}"
-                    ondragover="cellDragOver(event)"
-                    ondrop="cellDrop(event,'${esc(name)}',${sr.role_id},'${wk}')"
+                    ondragover="event.preventDefault();"  // Drag & Drop disabled
+                    ondrop="event.preventDefault();"      // Drag & Drop disabled
                     onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"
                     title="${tooltip}">${chips}</td>`;
         });  
@@ -763,51 +779,22 @@ function renderMatrix() {
     bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
 }  
 
-// ── Drag-Quellen rendern ───────────────────────────────────────────────────────
+// ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
 function renderDragSources() {
-    const { available_projects, available_tasks } = planningData;  
-
-    document.getElementById('proj-drag-list').innerHTML =
-        (available_projects || []).map(p =>
-            `<div class="drag-source" draggable="true"
-                  ondragstart="dragStart(event,'project',${p.project_id},'${esc(p.project_name)}','${p.color_hexcode||'#555'}')">
-                <span class="dot" style="background:${p.color_hexcode||'#555'}"></span>
-                <span>${esc(p.project_name)}</span>
-                <span class="text-dim" style="font-size:11px;margin-left:auto">${esc(p.customer)}</span>
-            </div>`
-        ).join('') || '<div class="text-dim" style="font-size:12px">Keine Projekte</div>';  
-
-    document.getElementById('task-drag-list').innerHTML =
-        (available_tasks || []).map(t =>
-            `<div class="drag-source" draggable="true"
-                  ondragstart="dragStart(event,'task',${t.task_id},'${esc(t.task_name)}','${t.color_hexcode||'#888'}')">
-                <span class="dot" style="background:${t.color_hexcode||'#888'}"></span>
-                <span>${esc(t.task_name)}</span>
-                ${t.project_name ? `<span class="text-dim" style="font-size:11px;margin-left:auto">${esc(t.project_name)}</span>` : ''}
-            </div>`
-        ).join('') || '<div class="text-dim" style="font-size:12px">Keine Tasks</div>';  
-
-    // Section-Höhen nach Befüllung aktualisieren
-    setTimeout(initSections, 50);
+    // Die Drag & Drop Sektionen wurden entfernt. Diese Funktion wird nicht mehr benötigt.
+    // Falls die Elemente dennoch existieren, leere sie.
+    const projList = document.getElementById('proj-drag-list');
+    if (projList) projList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
+    const taskList = document.getElementById('task-drag-list');
+    if (taskList) taskList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
 }  
 
-// ── Drag & Drop ────────────────────────────────────────────────────────────────
-function dragStart(e, type, id, name, color) {
-    dragPayload = { type, id, name, color };
-    e.dataTransfer.effectAllowed = 'copy';
-    e.dataTransfer.setData('text/plain', name);
-}  
+// ── Drag & Drop Funktionen (deaktiviert) ───────────────────────────────────────
+// Diese Funktionen bleiben als Platzhalter, werden aber nicht mehr aufgerufen oder sind inaktiv.
+function dragStart(e, type, id, name, color) { /* D&D entfernt */ }  
+function cellDragOver(e) { /* D&D entfernt */ }  
+function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }  
 
-function cellDragOver(e) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-}  
-
-function cellDrop(e, staff, roleId, weekKey) {
-    e.preventDefault();
-    if (!dragPayload) return;
-    doAssign(staff, roleId, weekKey, dragPayload);
-}  
 
 // ── Klick-Zuweisung ───────────────────────────────────────────────────────────
 function cellClick(e, staff, roleId, weekKey) {
@@ -824,7 +811,7 @@ function cellClick(e, staff, roleId, weekKey) {
     openDropdownCell = `${staff}|${roleId}|${weekKey}`;  
 
     const { available_projects, available_tasks } = planningData;
-    const items = [
+    _dropdownItems = [ // Items in globaler Variable speichern für Type-ahead
         ...(available_projects || [])
             .filter(p => !p.project_type || p.project_type === 'Project')
             .map(p => ({
@@ -837,16 +824,9 @@ function cellClick(e, staff, roleId, weekKey) {
         })),
     ];  
 
-    if (!items.length) { toast('Keine Projekte/Tasks verfügbar', 'error'); return; }  
+    if (!_dropdownItems.length) { toast('Keine Projekte/Tasks verfügbar', 'error'); return; }  
 
-    dd.innerHTML = items.map(it =>
-        `<div class="cell-dropdown-item"
-            onclick="dropdownAssign(event,'${esc(staff)}',${roleId},'${weekKey}','${it.type}',${it.id},'${esc(it.name)}','${it.color}')">
-            <span style="width:10px;height:10px;border-radius:50%;background:${it.color};flex-shrink:0"></span>
-            <span>${esc(it.name)}</span>
-            <span class="text-dim" style="font-size:10px;margin-left:auto">${esc(it.sub)}</span>
-        </div>`
-    ).join('');  
+    renderDropdownItems(_dropdownItems); // Initiales Rendering der Items
 
     // Positionieren relativ zur Zelle
     const rect = e.currentTarget.getBoundingClientRect();
@@ -854,7 +834,87 @@ function cellClick(e, staff, roleId, weekKey) {
     dd.style.top  = (rect.bottom + window.scrollY) + 'px';
     dd.style.left = (rect.left   + window.scrollX) + 'px';
     dd.style.position = 'absolute';
+
+    // Event Listener für Type-ahead aktivieren, wenn Dropdown offen ist
+    document.addEventListener('keydown', handleDropdownKeydown);
+    _dropdownSearchTerm = ''; // Suchterm zurücksetzen
+    clearTimeout(_dropdownSearchTimeout);
 }  
+
+// Rendert (oder re-rendert) die Items im Dropdown
+function renderDropdownItems(itemsToRender) {
+    const dd = document.getElementById('cell-dropdown');
+    dd.innerHTML = itemsToRender.map(it =>
+        `<div class="cell-dropdown-item"
+            onclick="dropdownAssign(event,'${esc(openDropdownCell.split('|')[0])}',${openDropdownCell.split('|')[1]},'${openDropdownCell.split('|')[2]}','${it.type}',${it.id},'${esc(it.name)}','${it.color}')">
+            <span style="width:10px;height:10px;border-radius:50%;background:${it.color};flex-shrink:0"></span>
+            <span>${esc(it.name)}</span>
+            <span class="text-dim" style="font-size:10px;margin-left:auto">${esc(it.sub)}</span>
+        </div>`
+    ).join('');
+}
+
+// Handhabung von Tastatureingaben für Type-ahead im Dropdown
+function handleDropdownKeydown(e) {
+    // Ignoriere spezielle Tasten wie Shift, Alt, Strg, etc.
+    if (e.key.length !== 1 && e.key !== 'Backspace' && e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') {
+        return;
+    }
+
+    if (e.key === 'Escape') {
+        closeDropdown();
+        return;
+    }
+
+    if (e.key === 'Backspace') {
+        if (_dropdownSearchTerm.length > 0) {
+            _dropdownSearchTerm = _dropdownSearchTerm.slice(0, -1);
+            filterAndHighlightDropdown();
+        }
+        e.preventDefault(); // Verhindert, dass der Browser zurückgeht
+        return;
+    }
+
+    if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // Hier könnte Logik für die Navigation und Auswahl mit Pfeiltasten/Enter implementiert werden
+        // Fürs Erste: nur Standardverhalten verhindern
+        e.preventDefault(); 
+        return;
+    }
+    
+    _dropdownSearchTerm += e.key.toLowerCase();
+    filterAndHighlightDropdown();
+
+    // Timeout zurücksetzen, um den Suchterm nach einer kurzen Pause zu löschen
+    clearTimeout(_dropdownSearchTimeout);
+    _dropdownSearchTimeout = setTimeout(() => {
+        _dropdownSearchTerm = '';
+        renderDropdownItems(_dropdownItems); // Zurück zum ungefilterten Zustand
+    }, 1000); // 1 Sekunde Verzögerung
+}
+
+function filterAndHighlightDropdown() {
+    if (_dropdownSearchTerm === '') {
+        renderDropdownItems(_dropdownItems);
+        return;
+    }
+
+    const filteredItems = _dropdownItems.filter(item => 
+        item.name.toLowerCase().includes(_dropdownSearchTerm) ||
+        (item.sub && item.sub.toLowerCase().includes(_dropdownSearchTerm))
+    );
+    renderDropdownItems(filteredItems);
+
+    // Optional: Erstes passendes Element scrollen oder hervorheben
+    const firstMatch = document.querySelector('.cell-dropdown-item');
+    if (firstMatch) {
+        firstMatch.scrollIntoView({ block: 'nearest' });
+        firstMatch.classList.add('highlight'); // Beispiel: CSS-Klasse für Hervorhebung
+        // Nach kurzer Zeit Highlight wieder entfernen, falls keine Auswahl
+        setTimeout(() => firstMatch.classList.remove('highlight'), 500);
+    }
+}
+
 
 async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) {
     e.stopPropagation();
@@ -866,6 +926,9 @@ async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) 
 function closeDropdown() {
     document.getElementById('cell-dropdown').style.display = 'none';
     openDropdownCell = null;
+    document.removeEventListener('keydown', handleDropdownKeydown); // Event Listener entfernen
+    _dropdownSearchTerm = ''; // Suchterm löschen
+    clearTimeout(_dropdownSearchTimeout);
 }  
 
 // Klick außerhalb schließt Dropdown
@@ -884,7 +947,11 @@ async function doAssign(staff, roleId, weekKey, payload) {
     try {
         await api('POST', '/api/planning/assign', body);
         toast(`Zugewiesen: ${payload.name}`);
-        loadPlanning();
+        
+        // Nach Zuweisung den Projektstatus neu laden und prüfen
+        await loadProjectStatus(payload.id); // Projekt-ID übergeben
+        loadPlanning(); // Matrix neu laden
+
     } catch(e) {
         toast(e.message, 'error');
     }
@@ -900,6 +967,8 @@ async function removePlanning(e, staff, weekKey, projectId, taskId) {
             task_id:    taskId    !== 'null' && taskId    != null ? parseInt(taskId)    : null,
         });
         loadPlanning();
+        // Nach dem Entfernen könnte man den Status des Projekts auch prüfen,
+        // aber die Hauptanforderung war für die Zuweisung.
     } catch(err) {
         toast(err.message, 'error');
     }
@@ -926,11 +995,25 @@ async function confirmAssign() {
     await doAssign(assignTarget.staff, roleId, assignTarget.weekKey, dragPayload);
 }  
 
-// ── Projektstatus ─────────────────────────────────────────────────────────────
-async function loadProjectStatus() {
+// ── Projektstatus (mit Suchfeld) ─────────────────────────────────────────────
+// Der projectId-Parameter ist optional und wird verwendet, um eine spezifische Meldung anzuzeigen.
+async function loadProjectStatus(assignedProjectId = null) {
     const rows = await api('GET', '/api/planning/project_status');  
+    _allProjectStatusRows = rows; // Alle Zeilen speichern
+    filterProjectStatus(assignedProjectId); // Initial filtern und ggf. Meldung anzeigen
+}
 
-    // GEÄNDERT: orange entfernt
+function filterProjectStatus(assignedProjectId = null) {
+    const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
+    let filteredRows = _allProjectStatusRows;
+
+    if (searchTerm) {
+        filteredRows = _allProjectStatusRows.filter(p => 
+            p.project_name.toLowerCase().includes(searchTerm) ||
+            (p.customer && p.customer.toLowerCase().includes(searchTerm))
+        );
+    }
+
     const colorMap = {
         red:        ['#E74C3C', 'rgba(231,76,60,0.12)'],
         green:      ['#2ECC71', 'rgba(46,204,113,0.12)'],
@@ -938,10 +1021,9 @@ async function loadProjectStatus() {
     };
     const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';  
 
-    document.getElementById('proj-status-body').innerHTML = rows.map(p => {
+    document.getElementById('proj-status-body').innerHTML = filteredRows.map(p => {
         const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];  
 
-        // showIst greift jetzt auch für ehemalige orange-Fälle (jetzt lightgreen)
         const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
         const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;  
 
@@ -951,7 +1033,7 @@ async function loadProjectStatus() {
                 <strong>${esc(p.project_name)}</strong>
             </td>
             <td class="text-dim">${esc(p.customer)}</td>
-            <td class="text-mono">${Math.round(p.restaufwand)}h</td>  <!-- GEÄNDERT: war p.target_hours -->
+            <td class="text-mono">${Math.round(p.restaufwand)}h</td>
             <td class="text-mono text-dim">${fmtKw(p.due_kw)}</td>
             <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
                 ${showIst ? fmtKw(p.ist_kw) : '–'}
@@ -969,7 +1051,16 @@ async function loadProjectStatus() {
             </td>
         </tr>`;
     }).join('');
-}  
+
+    // Meldung anzeigen, wenn Planung erledigt ist
+    if (assignedProjectId !== null) {
+        const assignedProject = filteredRows.find(p => p.project_id === assignedProjectId);
+        if (assignedProject && assignedProject.remaining_hours < 15) {
+            toast(`Projekt "${assignedProject.project_name}" ist jetzt nahezu abgedeckt!`, 'success');
+        }
+    }
+}
+
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 function contrastColor(hex) {
@@ -1008,7 +1099,6 @@ async function showForecast() {
         }
 
         // 2. Chart-Rendering-Endpunkt aufrufen (erwartet SVG/XML)
-        // WICHTIG: expectedResponseContentType ist jetzt 'image/svg+xml'
         const chartSvg = await api('POST', '/api/charts/forecast_burndown_chart', forecastData, 'image/svg+xml'); 
 
         forecastChartContainer.innerHTML = chartSvg; // SVG direkt einfügen
