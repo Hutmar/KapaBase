@@ -282,7 +282,12 @@ border-bottom: 1px solid rgba(42,48,80,0.3);
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
+                        <option value="4">4</option> <!-- NEU: 4 -->
                         <option value="5" selected>5</option>
+                        <option value="6">6</option> <!-- NEU: 6 -->
+                        <option value="7">7</option> <!-- NEU: 7 -->
+                        <option value="8">8</option> <!-- NEU: 8 -->
+                        <option value="9">9</option> <!-- NEU: 9 -->
                         <option value="10">10</option>
                         <option value="999">Alle</option>
                     </select>
@@ -506,7 +511,7 @@ async function loadPlanning() {
     setTimeout(initSections, 50);
 }  
 
-// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Beschränkung)
+// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Filter)
 let _allWeeks = null;
 async function ensureEndWeekDropdown(selectedVal) {
     if (!_allWeeks || _allWeeks.length === 0) {

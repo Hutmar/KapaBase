@@ -184,14 +184,14 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
     # Erzeugt eine Liste von Wochen, beginnend eine Woche vor 'today'
     # und inklusive 'forecast_weeks_duration' weitere Wochen.
     # Total: forecast_weeks_duration + 1 Wochen für den Plot.
-    all_plot_weeks: List[str] = []
+    all_plot_weeks_full_range: List[str] = []
     current_date_iterator = today - timedelta(weeks=1) # Start für den ersten Datenpunkt (Ist-Zustand)
-    for _ in range(forecast_weeks_duration + 1): # Generiert N+1 Wochen
-        all_plot_weeks.append(iso_week_key(current_date_iterator))
+    for _ in range(forecast_weeks_duration + 1): # Generiert N+1 Wochen für plotting
+        all_plot_weeks_full_range.append(iso_week_key(current_date_iterator))
         current_date_iterator += timedelta(weeks=1)
 
     # Die Wochen, in denen tatsächlich Arbeit verplant wird (exkl. der ersten Ist-Woche)
-    forecast_active_weeks = all_plot_weeks[1:]
+    forecast_active_weeks = all_plot_weeks_full_range[1:]
 
 
     # ── Wöchentliche Kapazität pro Rolle berechnen ─────────────────────────────
@@ -217,16 +217,16 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
     current_impl = {p.project_id: initial_remaining_impl[p.project_id] for p in projects_data}
     current_test = {p.project_id: initial_remaining_test[p.project_id] for p in projects_data}
 
-    burndown_data: Dict[str, List[BurndownPoint]] = {
+    burndown_data_full_range: Dict[str, List[BurndownPoint]] = {
         str(p.project_id): [] for p in projects_data
     }
 
-    # Initialer Punkt (erste Woche in all_plot_weeks) = Ausgangslage (Ist-Zustand)
+    # Initialer Punkt (erste Woche in all_plot_weeks_full_range) = Ausgangslage (Ist-Zustand)
     # Zu diesem Zeitpunkt wurde noch keine Kapazität abgezogen.
     for proj in projects_data:
         pid_str = str(proj.project_id)
-        burndown_data[pid_str].append(BurndownPoint(
-            week_key=all_plot_weeks[0],
+        burndown_data_full_range[pid_str].append(BurndownPoint(
+            week_key=all_plot_weeks_full_range[0], # The 'Ist' week
             remaining_total=(
                 initial_remaining_impl[proj.project_id]
                 + initial_remaining_test[proj.project_id]
@@ -234,20 +234,24 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
         ))
 
     # Simulation über die *aktiven Forecast-Wochen* (ab heute), in denen Kapazität verbraucht wird
-    for wk in forecast_active_weeks:
+    last_week_any_project_active: Optional[str] = None # Tracks the latest week any project still has remaining work
+
+    for wk_index, wk in enumerate(forecast_active_weeks):
         avail_dev  = weekly_dev_cap.get(wk, 0.0)
         avail_test = weekly_test_cap.get(wk, 0.0)
 
-        # Projekte in Liefertermin-Reihenfolge abarbeiten (Priorität: früheste Due-Date)
+        # Apply capacity to projects
         for proj in projects_data:
             pid = proj.project_id
             rem_total = current_impl.get(pid, 0.0) + current_test.get(pid, 0.0)
+            # If a project was already finished, it remains finished.
             if rem_total <= 0:
                 continue
 
             needed_dev  = min(current_impl.get(pid, 0.0), MAX_DEV_PER_PROJECT)
             needed_test = min(current_test.get(pid, 0.0), MAX_TEST_PER_PROJECT)
 
+            # Allocate capacity from available pool
             alloc_dev  = min(needed_dev,  avail_dev)
             alloc_test = min(needed_test, avail_test)
 
@@ -256,35 +260,75 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
 
             current_impl[pid] = max(0.0, current_impl.get(pid, 0.0) - alloc_dev)
             current_test[pid] = max(0.0, current_test.get(pid, 0.0) - alloc_test)
+            
+            # If this project is *still active* (has remaining work) AFTER allocation this week,
+            # then this week is the last active week seen so far.
+            if current_impl[pid] > 0 or current_test[pid] > 0:
+                last_week_any_project_active = wk
 
-        # Burndown-Punkt für diese Woche für alle Projekte eintragen
+        # Record burndown point for this week for all projects
         for proj in projects_data:
             pid_str = str(proj.project_id)
             remaining = current_impl.get(proj.project_id, 0.0) + current_test.get(proj.project_id, 0.0)
-            burndown_data[pid_str].append(BurndownPoint(
+            burndown_data_full_range[pid_str].append(BurndownPoint(
                 week_key=wk,
                 remaining_total=remaining,
             ))
-
-        # Früher beenden, wenn alle Projekte fertig sind
-        if all(
-            current_impl.get(p.project_id, 0.0) + current_test.get(p.project_id, 0.0) <= 0
+        
+        # Check if all projects are finished at this point in the simulation
+        all_finished_this_week = all(
+            (current_impl.get(p.project_id, 0.0) + current_test.get(p.project_id, 0.0)) <= 0
             for p in projects_data
-        ):
-            # Fülle die restlichen *aktiven Forecast-Wochen* mit 0 auf, damit alle Serien gleich lang sind.
-            # Hier ist 'wk' die letzte Woche, in der noch gearbeitet wurde.
-            current_wk_index = forecast_active_weeks.index(wk)
-            for future_wk in forecast_active_weeks[current_wk_index + 1:]:
+        )
+        if all_finished_this_week:
+            # If all projects are finished this week, then no need to track last_week_any_project_active further.
+            # It should already be set to the last week where *any* work was done.
+            # Fill remaining active forecast weeks with 0 for all projects to ensure consistent series length
+            for future_wk_index in range(wk_index + 1, len(forecast_active_weeks)):
+                future_wk = forecast_active_weeks[future_wk_index]
                 for proj in projects_data:
-                    burndown_data[str(proj.project_id)].append(
+                    burndown_data_full_range[str(proj.project_id)].append(
                         BurndownPoint(week_key=future_wk, remaining_total=0.0)
                     )
-            break # Simulation beenden
+            break # Stop simulation early because all projects are finished
 
+    # ── Final time range adjustment ────────────────────────────────────────────
+    # Determine the actual number of weeks to display in the plot.
+    # This will be up to the last week where any project was still active, plus a small buffer.
+    
+    final_num_weeks_to_display = len(all_plot_weeks_full_range) # Default to full range
+
+    if last_week_any_project_active:
+        try:
+            # Find the index of the last week where any project was still active
+            last_active_idx_in_full_range = all_plot_weeks_full_range.index(last_week_any_project_active)
+            
+            # Include this week and a small buffer (e.g., 2 additional weeks) for visual context
+            # but don't exceed the original full range.
+            target_idx = min(last_active_idx_in_full_range + 2, len(all_plot_weeks_full_range) - 1)
+            final_num_weeks_to_display = target_idx + 1 # +1 because index is 0-based
+        except ValueError:
+            # This should ideally not happen if last_week_any_project_active is correctly derived
+            pass
+    
+    # Ensure at least a minimum number of weeks are always displayed, e.g., 5 weeks,
+    # even if all projects finish very quickly or started with no work.
+    MIN_DISPLAY_WEEKS = 5
+    if final_num_weeks_to_display < MIN_DISPLAY_WEEKS and len(all_plot_weeks_full_range) >= MIN_DISPLAY_WEEKS:
+        final_num_weeks_to_display = MIN_DISPLAY_WEEKS
+
+    # Truncate weeks and burndown data to the final display range
+    final_weeks = all_plot_weeks_full_range[:final_num_weeks_to_display]
+    truncated_burndown_data: Dict[str, List[BurndownPoint]] = {}
+
+    for proj_id_str, points in burndown_data_full_range.items():
+        # Ensure that each project's data is also truncated to the final_num_weeks_to_display
+        truncated_burndown_data[proj_id_str] = points[:final_num_weeks_to_display]
+    
     return ForecastResponse(
         projects=projects_data,
-        weeks=all_plot_weeks, # Diese Liste hat nun immer `forecast_weeks_duration + 1` Elemente
-        burndown_data=burndown_data, # Jedes Projekt hat ebenfalls `forecast_weeks_duration + 1` Punkte
+        weeks=final_weeks,
+        burndown_data=truncated_burndown_data,
     )
 
 
