@@ -59,7 +59,7 @@ def list_tasks(project_id: Optional[int] = None):
             cur.execute("""
                 SELECT t.*, p.project_name FROM tasks t
                 LEFT JOIN project p ON p.project_id = t.project_id
-                WHERE p.project_type = 'Operations' 
+                WHERE p.project_type in ('Operations', 'Internal') 
                 ORDER BY t.task_name
             """)
         rows = cur.fetchall()

@@ -77,13 +77,10 @@ async function init() {
   const fSel = document.getElementById('f-project');
 
   projects.forEach(p => {
-    // 1. Für den Filter oben auf der Seite können weiterhin alle Projekte stehen
-    filterSel.innerHTML += `<option value="${p.project_id}">${p.project_name}</option>`;
-    
-    // 2. Für das Anlegen/Bearbeiten im Modal nur 'Operations' oder 'Internal' erlauben
-    // (Hinweis: Prüfe, ob das Feld in deiner DB exakt 'project_type', 'type' oder ähnlich heißt)
-    if (p.project_type === 'Operations' || p.project_type === 'Internal') {
-      fSel.innerHTML += `<option value="${p.project_id}">${p.project_name}</option>`;
+    // nur 'Operations' oder 'Internal' erlauben
+	if (p.project_type === 'Operations' || p.project_type === 'Internal') {
+      filterSel.innerHTML += `<option value="${p.project_id}">${p.project_name}</option>`;
+	  fSel.innerHTML += `<option value="${p.project_id}">${p.project_name}</option>`;
     }
   });
 
