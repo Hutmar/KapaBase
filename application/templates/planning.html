@@ -169,7 +169,7 @@
     font-weight: 600;
     border-top: 2px solid var(--border);
 }
-/* Drag-Quellen - Diese Styles werden jetzt nicht mehr verwendet, könnten entfernt werden */
+/* Drag-Quellen - Diese Styles werden jetzt nicht mehr verwendet */
 .drag-source {
     display: flex;
     align-items: center;
@@ -188,7 +188,6 @@
 .drag-source .dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 
 /* Einklappbare Sektionen - diese Styles bleiben, obwohl die Abschnitte entfernt wurden */
-/* Sie könnten für andere zukünftige Sektionen relevant sein */
 .section-header {
     display: flex;
     align-items: center;
@@ -225,6 +224,7 @@
     max-height: 220px;
     overflow-y: auto;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    padding: 5px 0; /* Etwas Padding für die Elemente */
 }
 .cell-dropdown-item {
     display: flex;
@@ -235,8 +235,14 @@
     font-size: 12px;
     border-bottom: 1px solid rgba(42,48,80,0.3);
 }
-.cell-dropdown-item:hover { background: var(--bg3); }
 .cell-dropdown-item:last-child { border-bottom: none; }
+/* Hervorhebung für Type-ahead */
+.cell-dropdown-item.active, .cell-dropdown-item:hover { 
+    background: var(--bg3); 
+    outline: 1px solid var(--accent); /* Leicht sichtbarer Rahmen */
+    outline-offset: -1px;
+}
+
 
 /* Neue Styles für Forecast-Modal */
 .forecast-modal .modal {
@@ -309,24 +315,24 @@
                 </label>
                 <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
 
-                <!-- Forecast-Bereich bleibt hier, da er auch ein Filter/Tool ist -->
-                <div style="margin-left: 20px; border-left: 1px solid var(--border); padding-left: 20px;">
-                    <label class="flex-gap text-dim" style="font-size:12px">
+                <!-- Forecast-Bereich: Layout angepasst für nebeneinander -->
+                <div style="margin-left: 20px; border-left: 1px solid var(--border); padding-left: 20px; display: flex; align-items: center; gap: 10px;">
+                    <label class="text-dim" style="font-size:12px; white-space: nowrap;">
                         Anzahl Projekte:
-                        <select id="forecast-project-count" style="width:70px">
-                            <option value="1">1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5" selected>5</option>
-                            <option value="6">6</option>
-                            <option value="7">7</option>
-                            <option value="8">8</option>
-                            <option value="9">9</option>
-                            <option value="10">10</option>
-                            <option value="999">Alle</option>
-                        </select>
                     </label>
+                    <select id="forecast-project-count" style="width:70px">
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                        <option value="999">Alle</option>
+                    </select>
                     <button class="btn btn-primary btn-sm" id="show-forecast-btn">Forecast</button>
                 </div>
             </div>
@@ -412,44 +418,18 @@ let dragPayload  = null;   // {type, id, name, color} - Drag & Drop entfernt, ab
 let assignTarget = null;   // für Modal-Rollenauswahl
 let openDropdownCell = null; // aktuell geöffnete Zelle für Click-Dropdown  
 let _dropdownItems = [];   // Speichert die Liste der Projekt/Task-Items für das Dropdown
+let _filteredDropdownItems = []; // Speichert die aktuell gefilterten Items
 let _dropdownSearchTerm = ''; // Aktueller Suchterm für das Dropdown
-let _dropdownSearchTimeout = null; // Timeout für das Zurücksetzen des Suchterms
+let _activeDropdownItemIndex = -1; // Index des aktuell aktiven (hervorgehobenen) Items
 let _allProjectStatusRows = []; // Speichert die ungefilterten Projektstatus-Zeilen
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];  
 
-// ── Einklapp-Zustand (Session-persistent via JS-Variable) ─────────────────────
-// Die Sektionen "Tasks" und "Projekte" wurden entfernt, diese Funktionen werden daher nicht mehr benötigt.
-// Sie bleiben als Platzhalter für zukünftige Erweiterungen, falls gewünscht.
+// ── Einklapp-Zustand (Sektionen entfernt, Funktionen inaktiv) ─────────────────────
 const sectionState = { 'proj-section': true, 'task-section': true };  
-
-function toggleSection(sectionId, toggleId) {
-    const sec  = document.getElementById(sectionId);
-    const tog  = document.getElementById(toggleId);
-    if (!sec || !tog) return; // Stellen sicher, dass die Elemente existieren
-    const open = !sectionState[sectionId];   // umschalten
-    sectionState[sectionId] = open;
-    applySectionState(sectionId, toggleId);
-}  
-
-function applySectionState(sectionId, toggleId) {
-    const sec  = document.getElementById(sectionId);
-    const tog  = document.getElementById(toggleId);
-    if (!sec || !tog) return;
-    if (sectionState[sectionId]) {
-        sec.style.maxHeight = sec.scrollHeight + 500 + 'px'; // Max-Height anpassen, falls nötig
-        tog.classList.remove('collapsed');
-    } else {
-        sec.style.maxHeight = '0px';
-        tog.classList.add('collapsed');
-    }
-}  
-
-// Diese Funktion wird nicht mehr aktiv verwendet, da die Sektionen entfernt wurden.
-function initSections() {
-    // applySectionState('proj-section', 'proj-toggle');
-    // applySectionState('task-section', 'task-toggle');
-}  
+function toggleSection(sectionId, toggleId) { /* Inaktiv */ }  
+function applySectionState(sectionId, toggleId) { /* Inaktiv */ }  
+function initSections() { /* Inaktiv */ }  
 
 // --- `api`-Funktion zur Handhabung verschiedener Content-Typen (unverändert) ---
 async function api(method, url, body = null, expectedResponseContentType = 'application/json') {
@@ -515,23 +495,18 @@ async function loadPlanning() {
         return;
     }  
 
-    // Dropdown immer mit allen KW aus der ungefilterten Basis befüllen.
-    // Dafür einmalig alle KW ohne end_week-Filter laden wenn noch nicht vorhanden.
     await ensureEndWeekDropdown(endWeekVal);  
 
     try { renderMatrix(); }
     catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); return; }  
 
-    // renderDragSources() wird nicht mehr aufgerufen, da Drag & Drop entfernt wurde.
-    loadProjectStatus(); // Ruft initial den Projektstatus und filtert ihn
-    // initSections() wird nicht mehr aktiv verwendet, da Sektionen entfernt wurden.
+    renderDragSources(); // Leert die D&D Bereiche
+    loadProjectStatus(); 
 }  
 
-// Stellt sicher dass das Dropdown alle KW enthält (ohne end_week-Beschränkung)
 let _allWeeks = null;
 async function ensureEndWeekDropdown(selectedVal) {
     if (!_allWeeks || _allWeeks.length === 0) {
-        // Einmalig alle KW holen (ohne end_week-Filter)
         const useCurrent = document.getElementById('use-current-week').checked;
         try {
             const base = await api('GET', `/api/planning/?use_current_week=${useCurrent}`);
@@ -549,7 +524,7 @@ function toggleEndWeek() {
     sel.disabled = !cb.checked;
     if (!cb.checked) {
         sel.value = '';
-        _allWeeks = null; // reset so dropdown is refreshed
+        _allWeeks = null;
     }
     loadPlanning();
 }  
@@ -685,6 +660,7 @@ function renderMatrix() {
             </td>`;  
 
         weeks.forEach(wk => {
+            const isCurrent = (wk === currentWk);
             const isPast       = wk < currentWk;
             const capHours     = (capData.week_hours || {})[wk] || 0;
             const absInfo      = staffAbs[wk];
@@ -781,8 +757,6 @@ function renderMatrix() {
 
 // ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
 function renderDragSources() {
-    // Die Drag & Drop Sektionen wurden entfernt. Diese Funktion wird nicht mehr benötigt.
-    // Falls die Elemente dennoch existieren, leere sie.
     const projList = document.getElementById('proj-drag-list');
     if (projList) projList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
     const taskList = document.getElementById('task-drag-list');
@@ -790,7 +764,6 @@ function renderDragSources() {
 }  
 
 // ── Drag & Drop Funktionen (deaktiviert) ───────────────────────────────────────
-// Diese Funktionen bleiben als Platzhalter, werden aber nicht mehr aufgerufen oder sind inaktiv.
 function dragStart(e, type, id, name, color) { /* D&D entfernt */ }  
 function cellDragOver(e) { /* D&D entfernt */ }  
 function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }  
@@ -798,20 +771,22 @@ function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }
 
 // ── Klick-Zuweisung ───────────────────────────────────────────────────────────
 function cellClick(e, staff, roleId, weekKey) {
-    // Klick auf remove-btn nicht abfangen
     if (e.target.classList.contains('remove-btn')) return;
     e.stopPropagation();  
 
     const dd = document.getElementById('cell-dropdown');
-    // Gleiche Zelle nochmals geklickt → schließen
+    
+    // Wenn gleiches Dropdown bereits offen ist, schließen
     if (openDropdownCell === `${staff}|${roleId}|${weekKey}`) {
         closeDropdown();
         return;
     }
+    closeDropdown(); // Jedes andere offene Dropdown schließen
+
     openDropdownCell = `${staff}|${roleId}|${weekKey}`;  
 
     const { available_projects, available_tasks } = planningData;
-    _dropdownItems = [ // Items in globaler Variable speichern für Type-ahead
+    _dropdownItems = [
         ...(available_projects || [])
             .filter(p => !p.project_type || p.project_type === 'Project')
             .map(p => ({
@@ -826,7 +801,8 @@ function cellClick(e, staff, roleId, weekKey) {
 
     if (!_dropdownItems.length) { toast('Keine Projekte/Tasks verfügbar', 'error'); return; }  
 
-    renderDropdownItems(_dropdownItems); // Initiales Rendering der Items
+    _filteredDropdownItems = [..._dropdownItems]; // Initial alle Items anzeigen
+    renderDropdownItems(_filteredDropdownItems); // Initiales Rendering der Items
 
     // Positionieren relativ zur Zelle
     const rect = e.currentTarget.getBoundingClientRect();
@@ -835,104 +811,121 @@ function cellClick(e, staff, roleId, weekKey) {
     dd.style.left = (rect.left   + window.scrollX) + 'px';
     dd.style.position = 'absolute';
 
-    // Event Listener für Type-ahead aktivieren, wenn Dropdown offen ist
+    // Event Listener für Type-ahead aktivieren
     document.addEventListener('keydown', handleDropdownKeydown);
     _dropdownSearchTerm = ''; // Suchterm zurücksetzen
-    clearTimeout(_dropdownSearchTimeout);
+    _activeDropdownItemIndex = -1; // Aktives Element zurücksetzen
 }  
 
-// Rendert (oder re-rendert) die Items im Dropdown
+// Rendert die Items im Dropdown
 function renderDropdownItems(itemsToRender) {
     const dd = document.getElementById('cell-dropdown');
-    dd.innerHTML = itemsToRender.map(it =>
-        `<div class="cell-dropdown-item"
+    if (!dd) return; // Sicherstellen, dass das Element existiert
+
+    dd.innerHTML = itemsToRender.map((it, index) =>
+        `<div class="cell-dropdown-item ${index === _activeDropdownItemIndex ? 'active' : ''}"
+            data-index="${index}"
             onclick="dropdownAssign(event,'${esc(openDropdownCell.split('|')[0])}',${openDropdownCell.split('|')[1]},'${openDropdownCell.split('|')[2]}','${it.type}',${it.id},'${esc(it.name)}','${it.color}')">
             <span style="width:10px;height:10px;border-radius:50%;background:${it.color};flex-shrink:0"></span>
             <span>${esc(it.name)}</span>
             <span class="text-dim" style="font-size:10px;margin-left:auto">${esc(it.sub)}</span>
         </div>`
     ).join('');
+
+    // Sicherstellen, dass das aktive Element sichtbar ist
+    highlightActiveDropdownItem();
 }
 
 // Handhabung von Tastatureingaben für Type-ahead im Dropdown
 function handleDropdownKeydown(e) {
-    // Ignoriere spezielle Tasten wie Shift, Alt, Strg, etc.
-    if (e.key.length !== 1 && e.key !== 'Backspace' && e.key !== 'Enter' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') {
-        return;
-    }
+    const dropdownItems = document.querySelectorAll('#cell-dropdown .cell-dropdown-item');
+    if (dropdownItems.length === 0) return;
 
-    if (e.key === 'Escape') {
-        closeDropdown();
-        return;
-    }
-
-    if (e.key === 'Backspace') {
-        if (_dropdownSearchTerm.length > 0) {
-            _dropdownSearchTerm = _dropdownSearchTerm.slice(0, -1);
-            filterAndHighlightDropdown();
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _activeDropdownItemIndex = (_activeDropdownItemIndex + 1) % _filteredDropdownItems.length;
+        highlightActiveDropdownItem();
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _activeDropdownItemIndex = (_activeDropdownItemIndex - 1 + _filteredDropdownItems.length) % _filteredDropdownItems.length;
+        highlightActiveDropdownItem();
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (_activeDropdownItemIndex > -1 && _activeDropdownItemIndex < _filteredDropdownItems.length) {
+            dropdownItems[_activeDropdownItemIndex].click(); // Simuliere Klick auf das aktive Element
         }
-        e.preventDefault(); // Verhindert, dass der Browser zurückgeht
-        return;
+    } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDropdown();
+    } else if (e.key.length === 1 || e.key === 'Backspace') { // Erlaubt normale Zeichen und Backspace
+        if (e.key === 'Backspace') {
+            _dropdownSearchTerm = _dropdownSearchTerm.slice(0, -1);
+        } else {
+            _dropdownSearchTerm += e.key.toLowerCase();
+        }
+        filterDropdownItems();
+        e.preventDefault(); // Verhindert, dass das Zeichen ins Inputfeld geschrieben wird, falls vorhanden
     }
-
-    if (e.key === 'Enter' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        // Hier könnte Logik für die Navigation und Auswahl mit Pfeiltasten/Enter implementiert werden
-        // Fürs Erste: nur Standardverhalten verhindern
-        e.preventDefault(); 
-        return;
-    }
-    
-    _dropdownSearchTerm += e.key.toLowerCase();
-    filterAndHighlightDropdown();
-
-    // Timeout zurücksetzen, um den Suchterm nach einer kurzen Pause zu löschen
-    clearTimeout(_dropdownSearchTimeout);
-    _dropdownSearchTimeout = setTimeout(() => {
-        _dropdownSearchTerm = '';
-        renderDropdownItems(_dropdownItems); // Zurück zum ungefilterten Zustand
-    }, 1000); // 1 Sekunde Verzögerung
 }
 
-function filterAndHighlightDropdown() {
+// Filtert die Dropdown-Items basierend auf dem Suchterm und rendert neu
+function filterDropdownItems() {
     if (_dropdownSearchTerm === '') {
-        renderDropdownItems(_dropdownItems);
-        return;
+        _filteredDropdownItems = [..._dropdownItems];
+    } else {
+        _filteredDropdownItems = _dropdownItems.filter(item => 
+            item.name.toLowerCase().includes(_dropdownSearchTerm) ||
+            (item.sub && item.sub.toLowerCase().includes(_dropdownSearchTerm))
+        );
     }
+    _activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1; // Erstes Element aktivieren, falls vorhanden
+    renderDropdownItems(_filteredDropdownItems);
+}
 
-    const filteredItems = _dropdownItems.filter(item => 
-        item.name.toLowerCase().includes(_dropdownSearchTerm) ||
-        (item.sub && item.sub.toLowerCase().includes(_dropdownSearchTerm))
-    );
-    renderDropdownItems(filteredItems);
+// Hebt das aktuell ausgewählte Dropdown-Element hervor und scrollt es in Sicht
+function highlightActiveDropdownItem() {
+    const dd = document.getElementById('cell-dropdown');
+    if (!dd) return;
 
-    // Optional: Erstes passendes Element scrollen oder hervorheben
-    const firstMatch = document.querySelector('.cell-dropdown-item');
-    if (firstMatch) {
-        firstMatch.scrollIntoView({ block: 'nearest' });
-        firstMatch.classList.add('highlight'); // Beispiel: CSS-Klasse für Hervorhebung
-        // Nach kurzer Zeit Highlight wieder entfernen, falls keine Auswahl
-        setTimeout(() => firstMatch.classList.remove('highlight'), 500);
+    // Alle aktiven Markierungen entfernen
+    dd.querySelectorAll('.cell-dropdown-item').forEach(item => item.classList.remove('active'));
+
+    if (_activeDropdownItemIndex > -1 && _activeDropdownItemIndex < _filteredDropdownItems.length) {
+        const activeItemElement = dd.querySelector(`.cell-dropdown-item[data-index="${_activeDropdownItemIndex}"]`);
+        if (activeItemElement) {
+            activeItemElement.classList.add('active');
+            // Scrollen, falls nötig
+            activeItemElement.scrollIntoView({ block: 'nearest' });
+        }
     }
 }
 
 
 async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) {
     e.stopPropagation();
-    closeDropdown();
+    closeDropdown(); // Dropdown nach Auswahl schließen
     const payload = { type, id, name, color };
     await doAssign(staff, roleId, weekKey, payload);
 }  
 
 function closeDropdown() {
-    document.getElementById('cell-dropdown').style.display = 'none';
+    const dd = document.getElementById('cell-dropdown');
+    if (dd) dd.style.display = 'none';
     openDropdownCell = null;
     document.removeEventListener('keydown', handleDropdownKeydown); // Event Listener entfernen
     _dropdownSearchTerm = ''; // Suchterm löschen
-    clearTimeout(_dropdownSearchTimeout);
+    _activeDropdownItemIndex = -1; // Aktives Element zurücksetzen
+    _filteredDropdownItems = []; // Gefilterte Liste löschen
 }  
 
 // Klick außerhalb schließt Dropdown
-document.addEventListener('click', () => closeDropdown());  
+document.addEventListener('click', (e) => {
+    const dd = document.getElementById('cell-dropdown');
+    if (dd && dd.style.display === 'block' && !dd.contains(e.target) && !e.target.closest('.droptarget')) {
+        closeDropdown();
+    }
+});
+
 
 // ── Zuweisung ausführen ────────────────────────────────────────────────────────
 async function doAssign(staff, roleId, weekKey, payload) {
@@ -949,7 +942,7 @@ async function doAssign(staff, roleId, weekKey, payload) {
         toast(`Zugewiesen: ${payload.name}`);
         
         // Nach Zuweisung den Projektstatus neu laden und prüfen
-        await loadProjectStatus(payload.id); // Projekt-ID übergeben
+        await loadProjectStatus(payload.type === 'project' ? payload.id : null); // Projekt-ID übergeben
         loadPlanning(); // Matrix neu laden
 
     } catch(e) {
@@ -967,8 +960,9 @@ async function removePlanning(e, staff, weekKey, projectId, taskId) {
             task_id:    taskId    !== 'null' && taskId    != null ? parseInt(taskId)    : null,
         });
         loadPlanning();
-        // Nach dem Entfernen könnte man den Status des Projekts auch prüfen,
-        // aber die Hauptanforderung war für die Zuweisung.
+        if (projectId !== 'null' && projectId != null) {
+             await loadProjectStatus(parseInt(projectId)); // Status nach Entfernen prüfen
+        }
     } catch(err) {
         toast(err.message, 'error');
     }
@@ -996,7 +990,6 @@ async function confirmAssign() {
 }  
 
 // ── Projektstatus (mit Suchfeld) ─────────────────────────────────────────────
-// Der projectId-Parameter ist optional und wird verwendet, um eine spezifische Meldung anzuzeigen.
 async function loadProjectStatus(assignedProjectId = null) {
     const rows = await api('GET', '/api/planning/project_status');  
     _allProjectStatusRows = rows; // Alle Zeilen speichern
@@ -1005,10 +998,10 @@ async function loadProjectStatus(assignedProjectId = null) {
 
 function filterProjectStatus(assignedProjectId = null) {
     const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
-    let filteredRows = _allProjectStatusRows;
+    let rowsToRender = _allProjectStatusRows;
 
     if (searchTerm) {
-        filteredRows = _allProjectStatusRows.filter(p => 
+        rowsToRender = _allProjectStatusRows.filter(p => 
             p.project_name.toLowerCase().includes(searchTerm) ||
             (p.customer && p.customer.toLowerCase().includes(searchTerm))
         );
@@ -1021,7 +1014,7 @@ function filterProjectStatus(assignedProjectId = null) {
     };
     const fmtKw = kw => kw ? 'KW ' + parseInt(kw.split('-W')[1]) : '–';  
 
-    document.getElementById('proj-status-body').innerHTML = filteredRows.map(p => {
+    document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
         const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];  
 
         const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
@@ -1054,7 +1047,7 @@ function filterProjectStatus(assignedProjectId = null) {
 
     // Meldung anzeigen, wenn Planung erledigt ist
     if (assignedProjectId !== null) {
-        const assignedProject = filteredRows.find(p => p.project_id === assignedProjectId);
+        const assignedProject = rowsToRender.find(p => p.project_id === assignedProjectId);
         if (assignedProject && assignedProject.remaining_hours < 15) {
             toast(`Projekt "${assignedProject.project_name}" ist jetzt nahezu abgedeckt!`, 'success');
         }
@@ -1121,7 +1114,6 @@ function closeForecastModal() {
     const modal = document.getElementById('forecast-modal');
     if (modal) {
         modal.style.display = 'none';
-        // Optional: Inhalt leeren oder zurücksetzen
         document.getElementById('forecast-chart-container').innerHTML = '';
     }
 }
