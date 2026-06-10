@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 # ── Sub-Router importieren ─────────────────────────────────────────────────────
-from routers import staff, projects, tasks, planning, absence, charts, worked_hours
+from routers import staff, projects, tasks, planning, absence, charts, worked_hours, forecast
 
 # ── App-Instanz ────────────────────────────────────────────────────────────────
 app = FastAPI(title="Kapazitätsverwaltung", version="1.0.0")
@@ -29,6 +29,7 @@ app.include_router(planning.router,     prefix="/api/planning",     tags=["Plann
 app.include_router(absence.router,      prefix="/api/absence",      tags=["Absence"])
 app.include_router(charts.router,       prefix="/api/charts",       tags=["Charts"])
 app.include_router(worked_hours.router, prefix="/api/worked_hours", tags=["WorkedHours"])
+app.include_router(forecast.router, prefix="/api/forecast", tags=["Forecast"])
 
 # ── Frontend-Routen (HTML-Seiten) ──────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
