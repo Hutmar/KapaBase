@@ -134,9 +134,11 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
         staff_rows = cur.fetchall()
         all_shortnames = list({r["shortname"] for r in staff_rows})
 
-        today               = date.today()
-        forecast_start      = today
-        forecast_end        = today + timedelta(weeks=forecast_weeks_duration + 1)
+        today = date.today()
+        # Prognosezeitraum: Von (heute - 1 Woche) bis (heute + forecast_weeks_duration + Puffer)
+        forecast_start_date_for_hols = today - timedelta(weeks=1)
+        forecast_end_date_for_hols   = today + timedelta(weeks=forecast_weeks_duration + 2) # Extra Puffer für Feiertage
+
 
         # 4. Abwesenheiten für den Prognosezeitraum
         cur.execute("""
@@ -145,12 +147,12 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
             WHERE shortname = ANY(%s)
               AND absence_to   >= %s
               AND absence_from <= %s
-        """, (all_shortnames, forecast_start, forecast_end))
+        """, (all_shortnames, forecast_start_date_for_hols, forecast_end_date_for_hols))
         absences = [dict(a) for a in cur.fetchall()]
 
     # Ab hier: reine Python-Berechnung, kein Cursor mehr nötig
 
-    at_hols = _build_at_hols(forecast_start, forecast_end)
+    at_hols = _build_at_hols(forecast_start_date_for_hols, forecast_end_date_for_hols)
 
     # ── Restaufwand pro Projekt ermitteln ──────────────────────────────────────
     projects_data: List[ForecastProject] = []
@@ -179,33 +181,28 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
         return ForecastResponse(projects=[], weeks=[], burndown_data={})
 
     # ── Wochenliste aufbauen ───────────────────────────────────────────────────
-    # Vorwoche als visueller Startpunkt (zeigt Ausgangslage vor Forecast)
-    prev_week_key = iso_week_key(today - timedelta(days=7))
+    # Erzeugt eine Liste von Wochen, beginnend eine Woche vor 'today'
+    # und inklusive 'forecast_weeks_duration' weitere Wochen.
+    # Total: forecast_weeks_duration + 1 Wochen für den Plot.
+    all_plot_weeks: List[str] = []
+    current_date_iterator = today - timedelta(weeks=1) # Start für den ersten Datenpunkt (Ist-Zustand)
+    for _ in range(forecast_weeks_duration + 1): # Generiert N+1 Wochen
+        all_plot_weeks.append(iso_week_key(current_date_iterator))
+        current_date_iterator += timedelta(weeks=1)
 
-    forecast_weeks: List[str] = []
-    cur_d = today
-    seen: set = set()
-    for _ in range(forecast_weeks_duration):
-        wk = iso_week_key(cur_d)
-        if wk not in seen:
-            forecast_weeks.append(wk)
-            seen.add(wk)
-        cur_d += timedelta(weeks=1)
+    # Die Wochen, in denen tatsächlich Arbeit verplant wird (exkl. der ersten Ist-Woche)
+    forecast_active_weeks = all_plot_weeks[1:]
 
-    # Gesamte Wochenliste: Vorwoche + Forecast-Wochen
-    # → exakt gleich viele Einträge wie Burndown-Punkte pro Projekt
-    full_weeks_list = [prev_week_key] + forecast_weeks
 
     # ── Wöchentliche Kapazität pro Rolle berechnen ─────────────────────────────
-    # Nur für die Forecast-Wochen (nicht die Vorwoche, dort wird nicht gearbeitet)
-    weekly_dev_cap:  Dict[str, float] = {wk: 0.0 for wk in forecast_weeks}
-    weekly_test_cap: Dict[str, float] = {wk: 0.0 for wk in forecast_weeks}
+    weekly_dev_cap:  Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
+    weekly_test_cap: Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
 
     for sr in staff_rows:
         role      = sr["role"]
         shortname = sr["shortname"]
         hpd       = float(sr["hours_per_day"])
-        for wk in forecast_weeks:
+        for wk in forecast_active_weeks:
             h = _effective_hours_in_week(shortname, hpd, wk, absences, at_hols)
             if role == "Developer":
                 weekly_dev_cap[wk]  += h
@@ -224,19 +221,20 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
         str(p.project_id): [] for p in projects_data
     }
 
-    # Initialer Punkt (Vorwoche) = Ausgangslage, noch keine Arbeit abgezogen
+    # Initialer Punkt (erste Woche in all_plot_weeks) = Ausgangslage (Ist-Zustand)
+    # Zu diesem Zeitpunkt wurde noch keine Kapazität abgezogen.
     for proj in projects_data:
         pid_str = str(proj.project_id)
         burndown_data[pid_str].append(BurndownPoint(
-            week_key=prev_week_key,
+            week_key=all_plot_weeks[0],
             remaining_total=(
                 initial_remaining_impl[proj.project_id]
                 + initial_remaining_test[proj.project_id]
             ),
         ))
 
-    # Simulation über die eigentlichen Forecast-Wochen
-    for wk in forecast_weeks:
+    # Simulation über die *aktiven Forecast-Wochen* (ab heute), in denen Kapazität verbraucht wird
+    for wk in forecast_active_weeks:
         avail_dev  = weekly_dev_cap.get(wk, 0.0)
         avail_test = weekly_test_cap.get(wk, 0.0)
 
@@ -273,19 +271,20 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
             current_impl.get(p.project_id, 0.0) + current_test.get(p.project_id, 0.0) <= 0
             for p in projects_data
         ):
-            # Restliche Wochen mit 0 auffüllen, damit alle Serien gleich lang sind
-            finished_idx = forecast_weeks.index(wk) + 1
-            for future_wk in forecast_weeks[finished_idx:]:
+            # Fülle die restlichen *aktiven Forecast-Wochen* mit 0 auf, damit alle Serien gleich lang sind.
+            # Hier ist 'wk' die letzte Woche, in der noch gearbeitet wurde.
+            current_wk_index = forecast_active_weeks.index(wk)
+            for future_wk in forecast_active_weeks[current_wk_index + 1:]:
                 for proj in projects_data:
                     burndown_data[str(proj.project_id)].append(
                         BurndownPoint(week_key=future_wk, remaining_total=0.0)
                     )
-            break
+            break # Simulation beenden
 
     return ForecastResponse(
         projects=projects_data,
-        weeks=full_weeks_list,        # Vorwoche + Forecast-Wochen → gleiche Länge wie Burndown-Punkte
-        burndown_data=burndown_data,
+        weeks=all_plot_weeks, # Diese Liste hat nun immer `forecast_weeks_duration + 1` Elemente
+        burndown_data=burndown_data, # Jedes Projekt hat ebenfalls `forecast_weeks_duration + 1` Punkte
     )
 
 
