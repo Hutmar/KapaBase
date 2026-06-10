@@ -554,7 +554,7 @@ def project_planning_status():
         )
         last_planned = last_end_map.get(pid)
 
-        if restaufwand <= 0 or restaufwand < 15:
+        if restaufwand <= 0 or restaufwand < 16:
             # Bereits gedeckt oder unter Schwelle → KW nach letzter Planungswoche
             project_ist_kw[pid] = _next_week_key(last_planned) if last_planned else None
         else:
