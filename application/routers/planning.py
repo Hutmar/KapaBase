@@ -463,113 +463,224 @@ def project_planning_status():
         """)
         plan_rows = [dict(r) for r in cur.fetchall()]
 
-        # Abwesenheiten für beteiligte Mitarbeiter
-        if plan_rows:
-            pstaff = list({r["staff"] for r in plan_rows})
-            min_d  = min(r["start_date"] for r in plan_rows)
-            max_d  = max(r["end_date"]   for r in plan_rows)
-            cur.execute("""
-                SELECT shortname, absence_from, absence_to
-                FROM absence
-                WHERE shortname = ANY(%s)
-                AND absence_to >= %s AND absence_from <= %s
-            """, (pstaff, min_d, max_d))
-            all_absences = [dict(a) for a in cur.fetchall()]
-        else:
-            all_absences = []
-            min_d = max_d = date.today()
-
-        # Letztes worked_hours-Datum je Projekt
+    # Abwesenheiten für beteiligte Mitarbeiter
+    if plan_rows:
+        pstaff = list({r["staff"] for r in plan_rows})
+        min_d  = min(r["start_date"] for r in plan_rows)
+        max_d  = max(r["end_date"]   for r in plan_rows)
         cur.execute("""
-            SELECT project_id, MAX(day) AS max_day
-            FROM worked_hours GROUP BY project_id
-        """)
-        max_worked_day_status = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
+            SELECT shortname, absence_from, absence_to
+            FROM absence
+            WHERE shortname = ANY(%s)
+            AND absence_to >= %s AND absence_from <= %s
+        """, (pstaff, min_d, max_d))
+        all_absences = [dict(a) for a in cur.fetchall()]
+    else:
+        all_absences = []
+        min_d = max_d = date.today()
 
-        # Feiertage
-        at_hols = _build_at_hols(min_d, max_d) if plan_rows else set()
+    # Letztes worked_hours-Datum je Projekt (für outdated-Markierung)
+    cur.execute("""
+        SELECT project_id, MAX(day) AS max_day
+        FROM worked_hours GROUP BY project_id
+    """)
+    max_worked_day_status = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
 
-        # Geplante Stunden je Projekt + Rolle aggregieren
-        # Veraltete Planungen (neuere worked_hours vorhanden) werden NICHT eingerechnet.
-        plan_agg:     dict = {}   # {project_id: {'Developer': float, 'Tester': float}}
-        last_end_map: dict = {}   # {project_id: date}
+    # --- Start der Änderungen für 'Liefertermin Ist' ---
 
-        for pr in plan_rows:
-            pid = pr["project_id"]
+    # 1. Bestimme den gesamten Wochenbereich für die Berechnung
+    # Dies stellt sicher, dass wir genügend Wochen in der Zukunft abdecken,
+    # um den 'Ist-KW' zu finden, selbst wenn er weit in der Zukunft liegt.
+    if plan_rows:
+        min_overall_date = min(r["start_date"] for r in plan_rows)
+        max_overall_date = max(r["end_date"] for r in plan_rows)
+    else:
+        # Fallback-Bereich, wenn keine Planungszeilen vorhanden sind
+        min_overall_date = date.today()
+        max_overall_date = date.today() + timedelta(weeks=12)
 
-            # Outdated-Check: gibt es worked_hours mit day > pl.end_date?
-            is_outdated = (
-                pid in max_worked_day_status
-                and max_worked_day_status[pid] > pr["end_date"]
-            )
-            if is_outdated:
-                continue  # diese Planung nicht in die offenen Stunden einrechnen
+    # Erweitere den Endzeitpunkt um einen Puffer von weiteren 12 Wochen,
+    # um sicherzustellen, dass wir den 'Ist-KW' auch für langlaufende Projekte finden.
+    calculation_end_date = max_overall_date + timedelta(weeks=12)
 
-            wk = iso_week_key(pr["start_date"])
-            h  = _effective_hours_in_week(
-                pr["staff"], float(pr["hours_per_day"]),
-                wk, all_absences, at_hols)
-            plan_agg.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
-            role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
-            plan_agg[pid][role_key] += h
+    all_calc_weeks: List[str] = []
+    current_week_iter_date = min_overall_date
+    while current_week_iter_date <= calculation_end_date:
+        wk = iso_week_key(current_week_iter_date)
+        if not all_calc_weeks or all_calc_weeks[-1] != wk:
+            all_calc_weeks.append(wk)
+        current_week_iter_date += timedelta(days=7)
 
-            prev = last_end_map.get(pid)
-            if prev is None or pr["end_date"] > prev:
-                last_end_map[pid] = pr["end_date"]
+    # Feiertage für den erweiterten Zeitraum neu aufbauen
+    at_hols = _build_at_hols(min_overall_date, calculation_end_date) if all_calc_weeks else set()
 
-        result = []
-        for p in projects:
-            pid = p["project_id"]
-            w   = worked.get(pid, {"worked_impl": 0, "worked_test": 0})
-            pa  = plan_agg.get(pid, {"Developer": 0.0, "Tester": 0.0})
+    # 2. Aggregiere geplante Stunden pro Projekt und pro Kalenderwoche (ohne veraltete Planungen)
+    # Diese Struktur ermöglicht es uns, die Stunden wochenweise zu subtrahieren.
+    planned_hours_by_project_and_week_non_outdated = {}
 
-            remaining_impl = p["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
-            remaining_test = p["plan_test"] - float(w["worked_test"]) - pa["Tester"]
-            diff = remaining_impl + remaining_test
+    for pr in plan_rows:
+        pid = pr["project_id"]
+        
+        # Prüfung auf "Outdated"-Status, wie sie auch für `plan_agg` und `last_end_map` verwendet wird
+        is_outdated = (
+            pid in max_worked_day_status
+            and max_worked_day_status[pid] > pr["end_date"]
+        )
+        if is_outdated:
+            continue # Diese veraltete Planung wird für die 'Ist-KW'-Berechnung ignoriert
 
-            # Restaufwand = target_hours minus tatsächlich erfasste Stunden
-            restaufwand = (
-                p["target_hours"]
-                - float(w["worked_impl"])
-                - float(w["worked_test"])
-            )
+        wk = iso_week_key(pr["start_date"])
+        
+        # Berechne die effektiven Stunden für diesen Planungseintrag in der betreffenden Woche
+        effective_hours = _effective_hours_in_week(
+            pr["staff"], float(pr["hours_per_day"]), wk, all_absences, at_hols
+        )
 
-            # orange entfernt – alles ≤ 0 ist lightgreen
-            if diff > 0:
-                status_color = "red"
-            elif diff == 0:
-                status_color = "green"
+        if pid not in planned_hours_by_project_and_week_non_outdated:
+            planned_hours_by_project_and_week_non_outdated[pid] = {}
+        if wk not in planned_hours_by_project_and_week_non_outdated[pid]:
+            planned_hours_by_project_and_week_non_outdated[pid][wk] = 0.0
+        
+        planned_hours_by_project_and_week_non_outdated[pid][wk] += effective_hours
+
+    # Geplante Stunden je Projekt + Rolle aggregieren (für `remaining_impl`, `remaining_test`, `diff`)
+    # Veraltete Planungen (neuere worked_hours vorhanden) werden NICHT eingerechnet.
+    plan_agg:     dict = {}   # {project_id: {'Developer': float, 'Tester': float}}
+    last_end_map: dict = {}   # {project_id: date}  # Wird verwendet, um die "letzte Planungswoche" zu finden
+    for pr in plan_rows:
+        pid = pr["project_id"]
+
+        # Outdated-Check: gibt es worked_hours mit day > pl.end_date?
+        is_outdated = (
+            pid in max_worked_day_status
+            and max_worked_day_status[pid] > pr["end_date"]
+        )
+        if is_outdated:
+            continue  # diese Planung nicht in die offenen Stunden einrechnen  
+        wk = iso_week_key(pr["start_date"])
+        h  = _effective_hours_in_week(
+            pr["staff"], float(pr["hours_per_day"]),
+            wk, all_absences, at_hols)
+        plan_agg.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+        role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
+        plan_agg[pid][role_key] += h  
+        prev = last_end_map.get(pid)
+        if prev is None or pr["end_date"] > prev:
+            last_end_map[pid] = pr["end_date"]
+
+    # 3. Berechne den 'Ist-KW' für jedes Projekt basierend auf den wöchentlichen Planungen
+    project_calculated_ist_kw: dict = {}
+
+    for p in projects:
+        pid = p["project_id"]
+        w   = worked.get(pid, {"worked_impl": 0, "worked_test": 0})
+        
+        # Initialer Restaufwand (target_hours minus tatsächlich erfasste Stunden)
+        initial_restaufwand = (
+            p["target_hours"]
+            - float(w["worked_impl"])
+            - float(w["worked_test"])
+        )
+        
+        current_remaining_for_ist_calc = initial_restaufwand
+        calculated_ist_kw = None
+        
+        # Ermittle das Enddatum der letzten nicht-veralteten Planung für dieses Projekt
+        last_planned_date_for_proj = last_end_map.get(pid)
+        
+        # Fall 1: Projekt hat bereits 0 oder negative Reststunden
+        if current_remaining_for_ist_calc <= 0:
+            # Der Liefertermin ist die Kalenderwoche NACH der letzten geplanten Woche
+            if last_planned_date_for_proj:
+                last_planned_iso = last_planned_date_for_proj.isocalendar()
+                next_monday = date.fromisocalendar(last_planned_iso[0], last_planned_iso[1], 1) + timedelta(weeks=1)
+                next_week_iso = next_monday.isocalendar()
+                calculated_ist_kw = f"{next_week_iso[0]}-W{next_week_iso[1]:02d}"
             else:
-                status_color = "lightgreen"
-
-            # Soll-KW aus due_date
-            due_kw = None
-            if p["due_date"]:
-                iso = p["due_date"].isocalendar()
-                due_kw = f"{iso[0]}-W{iso[1]:02d}"
-
-            # Ist-KW: letzte KW mit Planung
-            last_end = last_end_map.get(pid)
-            if last_end:
-                iso_e  = last_end.isocalendar()
-                ist_kw = f"{iso_e[0]}-W{iso_e[1]:02d}"
+                # Kein Liefertermin Ist bestimmbar, wenn keine Planung und Restaufwand <= 0
+                calculated_ist_kw = None
+        
+        # Fall 2: Reststunden sind positiv, aber unter 15 Stunden (Schwellenwert zum Ignorieren)
+        elif current_remaining_for_ist_calc < 15:
+            # Diese Reststunden werden ignoriert, 'Ist-KW' ist die Woche NACH der letzten geplanten Woche
+            if last_planned_date_for_proj:
+                last_planned_iso = last_planned_date_for_proj.isocalendar()
+                next_monday = date.fromisocalendar(last_planned_iso[0], last_planned_iso[1], 1) + timedelta(weeks=1)
+                next_week_iso = next_monday.isocalendar()
+                calculated_ist_kw = f"{next_week_iso[0]}-W{next_week_iso[1]:02d}"
             else:
-                ist_kw = due_kw
+                # Kein Liefertermin Ist bestimmbar, wenn keine Planung und Restaufwand < 15
+                calculated_ist_kw = None
+        
+        # Fall 3: Reststunden sind positiv und >= 15, wir müssen die Deckung durch Planung finden
+        else:
+            for wk in all_calc_weeks:
+                # Geplante Stunden für dieses Projekt in dieser Woche (nicht-veraltet)
+                weekly_planned_for_project = planned_hours_by_project_and_week_non_outdated.get(pid, {}).get(wk, 0.0)
+                current_remaining_for_ist_calc -= weekly_planned_for_project
+                
+                # Wenn die Reststunden gedeckt sind (<= 0) oder unter die 15-Stunden-Schwelle fallen
+                if current_remaining_for_ist_calc <= 0 or current_remaining_for_ist_calc < 15:
+                    # Der 'Ist-KW' ist die Kalenderwoche NACH der aktuellen Planungswoche (wk)
+                    current_week_monday = _week_bounds(wk)[0]
+                    next_week_monday = current_week_monday + timedelta(weeks=1)
+                    next_week_iso = next_week_monday.isocalendar()
+                    calculated_ist_kw = f"{next_week_iso[0]}-W{next_week_iso[1]:02d}"
+                    break # 'Ist-KW' gefunden, Schleife für dieses Projekt beenden
+        
+        project_calculated_ist_kw[pid] = calculated_ist_kw
 
-            result.append({
-                "project_id":      pid,
-                "project_name":    p["project_name"],
-                "customer":        p["customer"],
-                "color_hexcode":   p["color_hexcode"],
-                "target_hours":    p["target_hours"],
-                "restaufwand":     restaufwand,
-                "due_date":        str(p["due_date"]) if p["due_date"] else None,
-                "due_kw":          due_kw,
-                "ist_kw":          ist_kw,
-                "remaining_impl":  remaining_impl,
-                "remaining_test":  remaining_test,
-                "remaining_hours": diff,
-                "status_color":    status_color,
-            })
+    # --- Ende der Änderungen für 'Liefertermin Ist' ---
 
-        return result
+    result = []
+    for p in projects:
+        pid = p["project_id"]
+        w   = worked.get(pid, {"worked_impl": 0, "worked_test": 0})
+        pa  = plan_agg.get(pid, {"Developer": 0.0, "Tester": 0.0})  
+        
+        remaining_impl = p["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
+        remaining_test = p["plan_test"] - float(w["worked_test"]) - pa["Tester"]
+        diff = remaining_impl + remaining_test
+
+        # Restaufwand = target_hours minus tatsächlich erfasste Stunden
+        restaufwand = (
+            p["target_hours"]
+            - float(w["worked_impl"])
+            - float(w["worked_test"])
+        )
+
+        # orange entfernt – alles ≤ 0 ist lightgreen
+        if diff > 0:
+            status_color = "red"
+        elif diff == 0:
+            status_color = "green"
+        else:
+            status_color = "lightgreen"
+
+        # Soll-KW aus due_date
+        due_kw = None
+        if p["due_date"]:
+            iso = p["due_date"].isocalendar()
+            due_kw = f"{iso[0]}-W{iso[1]:02d}"
+
+        # Ist-KW: Hier wird der neu berechnete Wert verwendet
+        ist_kw = project_calculated_ist_kw.get(pid)
+        if ist_kw is None:
+            ist_kw = due_kw # Fallback auf due_kw, wenn kein 'Ist-KW' berechnet werden konnte
+
+        result.append({
+            "project_id":      pid,
+            "project_name":    p["project_name"],
+            "customer":        p["customer"],
+            "color_hexcode":   p["color_hexcode"],
+            "target_hours":    p["target_hours"],
+            "restaufwand":     restaufwand, # Dies ist der `target_hours - worked_hours` Wert
+            "due_date":        str(p["due_date"]) if p["due_date"] else None,
+            "due_kw":          due_kw,
+            "ist_kw":          ist_kw, # Der neue, berechnete 'Liefertermin Ist'
+            "remaining_impl":  remaining_impl,
+            "remaining_test":  remaining_test,
+            "remaining_hours": diff, # Dies ist der `diff` Wert (plan_impl+test - worked - planned)
+            "status_color":    status_color,
+        })  
+    return result
