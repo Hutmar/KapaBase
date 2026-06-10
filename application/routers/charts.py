@@ -2,7 +2,6 @@
 routers/charts.py – Diagramm-Endpunkte (Matplotlib, Headless/Agg)
 Alle Diagramme werden serverseitig als SVG/PNG gerendert und per StreamingResponse ausgeliefert.
 """
-
 import io
 import matplotlib
 matplotlib.use("Agg")  # Headless-Modus: kein Display erforderlich
@@ -12,23 +11,24 @@ from matplotlib.ticker import MaxNLocator
 
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
-from typing import Optional
+from typing import Optional, List, Dict
 from datetime import date, timedelta
 
 from db import get_cursor
 from capacity import calculate_capacity_per_week, calculate_total_capacity
 
+# Importiere die Pydantic-Modelle für den Forecast, um die Datenstruktur zu nutzen
+from routers.forecast import ForecastResponse, ForecastProject, BurndownPoint 
+
 router = APIRouter()
 
 # ── Hilfsfunktion: Figure → StreamingResponse ──────────────────────────────────
-
 def _fig_to_svg(fig) -> StreamingResponse:
     buf = io.BytesIO()
     fig.savefig(buf, format="svg", bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/svg+xml")
-
 
 def _fig_to_png(fig) -> StreamingResponse:
     buf = io.BytesIO()
@@ -37,9 +37,7 @@ def _fig_to_png(fig) -> StreamingResponse:
     buf.seek(0)
     return StreamingResponse(buf, media_type="image/png")
 
-
 # ── Kapazitäts-Liniendiagramm pro KW ──────────────────────────────────────────
-
 @router.get("/capacity_per_week")
 def chart_capacity_per_week(
     start_date: Optional[date] = None,
@@ -50,11 +48,11 @@ def chart_capacity_per_week(
         start_date = date.today()
     if end_date is None:
         end_date = start_date + timedelta(weeks=12)
-
+    
     data = calculate_capacity_per_week(start_date, end_date)
     weeks = data["weeks"]
     totals = [data["totals"].get(w, 0) for w in weeks]
-
+    
     fig, ax = plt.subplots(figsize=(max(8, len(weeks) * 0.5), 4))
     ax.plot(range(len(weeks)), totals, marker="o", color="#4A90D9", linewidth=2)
     ax.fill_between(range(len(weeks)), totals, alpha=0.15, color="#4A90D9")
@@ -68,9 +66,7 @@ def chart_capacity_per_week(
     fig.tight_layout()
     return _fig_to_svg(fig)
 
-
 # ── Burn-Down-Chart für ein Projekt ───────────────────────────────────────────
-
 @router.get("/burndown/{project_id}")
 def chart_burndown(project_id: int):
     """Burn-Down-Chart: Soll-Restaufwand vs. geleistete Stunden über die Zeit."""
@@ -79,14 +75,14 @@ def chart_burndown(project_id: int):
         proj = cur.fetchone()
         if not proj:
             return StreamingResponse(io.BytesIO(b""), media_type="image/svg+xml")
-
+    
         cur.execute("""
             SELECT day, impl_hours, test_hours
             FROM worked_hours
             WHERE project_id=%s ORDER BY day ASC
         """, (project_id,))
         worked = cur.fetchall()
-
+    
     target = proj["target_hours"]
     days, cumulative, ideal = [], [], []
     cum = 0
@@ -103,7 +99,7 @@ def chart_burndown(project_id: int):
         days = ["Keine Daten"]
         cumulative = [target]
         ideal = [target]
-
+    
     fig, ax = plt.subplots(figsize=(max(8, len(days) * 0.5), 4))
     ax.plot(range(len(days)), ideal,      linestyle="--", color="#AAAAAA", label="Ideal")
     ax.plot(range(len(days)), cumulative, marker="o",    color="#E74C3C", linewidth=2,
@@ -117,9 +113,7 @@ def chart_burndown(project_id: int):
     fig.tight_layout()
     return _fig_to_svg(fig)
 
-
 # ── Tortendiagramm: Kapazitätsverteilung nach Mitarbeiter ─────────────────────
-
 @router.get("/capacity_pie")
 def chart_capacity_pie(
     start_date: Optional[date] = None,
@@ -129,26 +123,24 @@ def chart_capacity_pie(
         start_date = date.today()
     if end_date is None:
         end_date = start_date + timedelta(weeks=12)
-
+    
     cap = calculate_total_capacity(start_date, end_date)
     by_staff = cap["by_staff"]
     if not by_staff:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, "Keine Daten", ha="center", va="center")
         return _fig_to_svg(fig)
-
+    
     labels = list(by_staff.keys())
     sizes  = list(by_staff.values())
-
+    
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.pie(sizes, labels=labels, autopct="%1.0f%%", startangle=90)
     ax.set_title(f"Kapazitätsverteilung\n{start_date} – {end_date}")
     fig.tight_layout()
     return _fig_to_svg(fig)
 
-
 # ── Balkendiagramm: Soll vs. Ist pro Projekt ──────────────────────────────────
-
 @router.get("/project_hours_bar")
 def chart_project_hours_bar():
     """Balkendiagramm: Planstunden vs. geleistete Stunden je aktivem Projekt."""
@@ -163,17 +155,17 @@ def chart_project_hours_bar():
             ORDER BY p.sort_order, p.project_name
         """)
         rows = cur.fetchall()
-
+    
     if not rows:
         fig, ax = plt.subplots()
         ax.text(0.5, 0.5, "Keine aktiven Projekte", ha="center", va="center")
         return _fig_to_svg(fig)
-
+    
     names   = [r["project_name"] for r in rows]
     targets = [r["target_hours"] for r in rows]
     worked  = [int(r["worked"]) for r in rows]
     x = range(len(names))
-
+    
     fig, ax = plt.subplots(figsize=(max(6, len(names) * 1.2), 5))
     bars1 = ax.bar([i - 0.2 for i in x], targets, 0.35, label="Planstunden",
                    color="#4A90D9", alpha=0.85)
@@ -186,4 +178,55 @@ def chart_project_hours_bar():
     ax.legend()
     ax.grid(axis="y", alpha=0.4)
     fig.tight_layout()
+    return _fig_to_svg(fig)
+
+# ── Burndown-Chart für den Forecast ───────────────────────────────────────────
+@router.post("/forecast_burndown_chart")
+def chart_forecast_burndown(forecast_data: ForecastResponse):
+    """
+    Erstellt ein Burndown-Chart für den Liefertermin-Forecast
+    basierend auf den vom Backend berechneten Daten.
+    """
+    if not forecast_data.projects or not forecast_data.weeks:
+        fig, ax = plt.subplots()
+        ax.text(0.5, 0.5, "Keine Forecast-Daten verfügbar", ha="center", va="center")
+        return _fig_to_svg(fig)
+
+    fig, ax = plt.subplots(figsize=(max(10, len(forecast_data.weeks) * 0.5), 6))
+
+    all_labels = [] # Für die Legende
+    for proj in forecast_data.projects:
+        pid_str = str(proj.project_id)
+        burndown_points = forecast_data.burndown_data.get(pid_str, [])
+        
+        # Sicherstellen, dass Wochen und Datenpunkte übereinstimmen
+        # Manchmal kann die Simulation früher enden, aber wir wollen bis zum Ende des Zeitraums plotten
+        # Daher müssen wir die burndown_points korrekt den Wochen zuordnen
+        
+        # Extrahiere die verbleibenden Stunden für jede Woche
+        remaining_hours = [bp.remaining_total for bp in burndown_points]
+        
+        # Nur plotten, wenn Daten vorhanden
+        if remaining_hours:
+            ax.plot(range(len(forecast_data.weeks)), remaining_hours, 
+                    color=proj.color_hexcode or '#555555', 
+                    marker='o', markersize=4, linewidth=2, 
+                    label=proj.project_name)
+            all_labels.append(proj.project_name)
+
+    ax.set_xticks(range(len(forecast_data.weeks)))
+    ax.set_xticklabels([wk.replace("-W", "\nKW") for wk in forecast_data.weeks],
+                       rotation=45, ha="right", fontsize=8)
+    ax.set_ylabel("Restaufwand (Stunden)")
+    ax.set_title("Liefertermin Forecast - Burndown")
+    ax.grid(axis="y", alpha=0.4)
+    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_ylim(bottom=0) # Y-Achse startet bei 0
+    
+    # Legende außerhalb des Plots positionieren
+    if all_labels:
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small', frameon=False)
+    
+    fig.tight_layout(rect=[0, 0, 0.85, 1]) # Platz für Legende schaffen
+
     return _fig_to_svg(fig)
