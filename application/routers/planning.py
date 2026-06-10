@@ -449,9 +449,7 @@ def project_planning_status():
                    p.due_date, p.color_hexcode
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
-            AND NOT EXISTS (
-                SELECT 1 FROM tasks t WHERE t.project_id = p.project_id
-            )
+            AND p.project_type = 'Project' 
             ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
         """)
         projects = cur.fetchall()
