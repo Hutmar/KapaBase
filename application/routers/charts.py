@@ -204,8 +204,7 @@ def chart_forecast_burndown(forecast_data: ForecastResponse):
     """
     
     logger.error("DEBUG: chart_forecast_burndown wurde aufgerufen.")
-    raise HTTPException(status_code=500, detail="TEST FEHLER: Chart-Erstellung ist absichtlich fehlgeschlagen.") # <--- DIESE ZEILE HINZUFÜGEN
-    
+
     try:
         if not forecast_data.projects:
             fig, ax = plt.subplots()
@@ -278,5 +277,5 @@ def chart_forecast_burndown(forecast_data: ForecastResponse):
         fig.tight_layout(rect=[0, 0, 0.82, 1])
         return _fig_to_svg(fig)
     except Exception as e:
-        logger.exception("Fehler beim Erstellen des Forecast Burndown Charts") # Loggt den vollständigen Traceback
+        logger.exception("Fehler beim Erstellen des Forecast Burndown Charts")
         raise HTTPException(status_code=500, detail=f"Chart-Erstellung fehlgeschlagen: {e}")
