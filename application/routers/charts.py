@@ -3,6 +3,7 @@ routers/charts.py – Diagramm-Endpunkte (Matplotlib, Headless/Agg)
 Alle Diagramme werden serverseitig als SVG gerendert und per StreamingResponse ausgeliefert.
 """
 import io
+import logging
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -18,6 +19,7 @@ from db import get_cursor
 from capacity import calculate_capacity_per_week, calculate_total_capacity
 from routers.forecast import ForecastResponse
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -200,6 +202,10 @@ def chart_forecast_burndown(forecast_data: ForecastResponse):
 
     Trennung von Kalkulation (forecast.py) und Rendering (hier).
     """
+    
+    logger.error("DEBUG: chart_forecast_burndown wurde aufgerufen.")
+    raise HTTPException(status_code=500, detail="TEST FEHLER: Chart-Erstellung ist absichtlich fehlgeschlagen.") # <--- DIESE ZEILE HINZUFÜGEN
+    
     try:
         if not forecast_data.projects:
             fig, ax = plt.subplots()
