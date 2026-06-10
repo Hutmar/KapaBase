@@ -200,73 +200,77 @@ def chart_forecast_burndown(forecast_data: ForecastResponse):
 
     Trennung von Kalkulation (forecast.py) und Rendering (hier).
     """
-    if not forecast_data.projects:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "Keine Forecast-Daten verfügbar", ha="center", va="center")
+    try:
+        if not forecast_data.projects:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "Keine Forecast-Daten verfügbar", ha="center", va="center")
+            return _fig_to_svg(fig)
+
+        # X-Achse aus den tatsächlichen Burndown-Punkten des ersten Projekts ableiten.
+        # Das ist robuster als forecast_data.weeks direkt zu verwenden, weil
+        # die Datenpunkte (inkl. Vorwoche) und die weeks-Liste garantiert übereinstimmen.
+        first_pid_str    = str(forecast_data.projects[0].project_id)
+        first_bp_list    = forecast_data.burndown_data.get(first_pid_str, [])
+        plot_weeks       = [bp.week_key for bp in first_bp_list]
+
+        # Fallback, falls burndown_data leer ist
+        if not plot_weeks:
+            plot_weeks = forecast_data.weeks
+
+        num_weeks = len(plot_weeks)
+        if num_weeks == 0:
+            fig, ax = plt.subplots()
+            ax.text(0.5, 0.5, "Keine Wochen-Daten verfügbar", ha="center", va="center")
+            return _fig_to_svg(fig)
+
+        fig, ax = plt.subplots(figsize=(max(10, num_weeks * 0.45), 6))
+
+        for proj in forecast_data.projects:
+            pid_str          = str(proj.project_id)
+            burndown_points  = forecast_data.burndown_data.get(pid_str, [])
+            remaining_hours  = [bp.remaining_total for bp in burndown_points]
+
+            # Längenprüfung: Serienlänge muss mit X-Achse übereinstimmen
+            if not remaining_hours:
+                continue
+            if len(remaining_hours) != num_weeks:
+                # Auffüllen mit 0 oder kürzen – sollte durch forecast.py nicht auftreten
+                remaining_hours = remaining_hours[:num_weeks]
+                while len(remaining_hours) < num_weeks:
+                    remaining_hours.append(0.0)
+
+            ax.plot(
+                range(num_weeks),
+                remaining_hours,
+                color=proj.color_hexcode or "#555555",
+                marker="o",
+                markersize=4,
+                linewidth=2,
+                label=proj.project_name,
+            )
+
+        # X-Achse: KW-Labels (Vorwoche wird als "KW XX (Ist)" markiert)
+        x_labels = []
+        for i, wk in enumerate(plot_weeks):
+            kw_num = int(wk.split("-W")[1])
+            label  = f"KW {kw_num}" if i > 0 else f"KW {kw_num}\n(Ist)"
+            x_labels.append(label)
+
+        ax.set_xticks(range(num_weeks))
+        ax.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=8)
+        ax.set_ylabel("Restaufwand (Stunden)")
+        ax.set_xlabel("Kalenderwoche")
+        ax.set_title("Liefertermin Forecast – Burndown")
+        ax.grid(axis="y", alpha=0.4)
+        ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        ax.set_ylim(bottom=0)
+
+        # Legende rechts außerhalb des Plot-Bereichs
+        ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5),
+                  fontsize="small", frameon=True, framealpha=0.8)
+
+        fig.tight_layout(rect=[0, 0, 0.82, 1])
         return _fig_to_svg(fig)
-
-    # X-Achse aus den tatsächlichen Burndown-Punkten des ersten Projekts ableiten.
-    # Das ist robuster als forecast_data.weeks direkt zu verwenden, weil
-    # die Datenpunkte (inkl. Vorwoche) und die weeks-Liste garantiert übereinstimmen.
-    first_pid_str    = str(forecast_data.projects[0].project_id)
-    first_bp_list    = forecast_data.burndown_data.get(first_pid_str, [])
-    plot_weeks       = [bp.week_key for bp in first_bp_list]
-
-    # Fallback, falls burndown_data leer ist
-    if not plot_weeks:
-        plot_weeks = forecast_data.weeks
-
-    num_weeks = len(plot_weeks)
-    if num_weeks == 0:
-        fig, ax = plt.subplots()
-        ax.text(0.5, 0.5, "Keine Wochen-Daten verfügbar", ha="center", va="center")
-        return _fig_to_svg(fig)
-
-    fig, ax = plt.subplots(figsize=(max(10, num_weeks * 0.45), 6))
-
-    for proj in forecast_data.projects:
-        pid_str          = str(proj.project_id)
-        burndown_points  = forecast_data.burndown_data.get(pid_str, [])
-        remaining_hours  = [bp.remaining_total for bp in burndown_points]
-
-        # Längenprüfung: Serienlänge muss mit X-Achse übereinstimmen
-        if not remaining_hours:
-            continue
-        if len(remaining_hours) != num_weeks:
-            # Auffüllen mit 0 oder kürzen – sollte durch forecast.py nicht auftreten
-            remaining_hours = remaining_hours[:num_weeks]
-            while len(remaining_hours) < num_weeks:
-                remaining_hours.append(0.0)
-
-        ax.plot(
-            range(num_weeks),
-            remaining_hours,
-            color=proj.color_hexcode or "#555555",
-            marker="o",
-            markersize=4,
-            linewidth=2,
-            label=proj.project_name,
-        )
-
-    # X-Achse: KW-Labels (Vorwoche wird als "KW XX (Ist)" markiert)
-    x_labels = []
-    for i, wk in enumerate(plot_weeks):
-        kw_num = int(wk.split("-W")[1])
-        label  = f"KW {kw_num}" if i > 0 else f"KW {kw_num}\n(Ist)"
-        x_labels.append(label)
-
-    ax.set_xticks(range(num_weeks))
-    ax.set_xticklabels(x_labels, rotation=45, ha="right", fontsize=8)
-    ax.set_ylabel("Restaufwand (Stunden)")
-    ax.set_xlabel("Kalenderwoche")
-    ax.set_title("Liefertermin Forecast – Burndown")
-    ax.grid(axis="y", alpha=0.4)
-    ax.yaxis.set_major_locator(MaxNLocator(integer=True))
-    ax.set_ylim(bottom=0)
-
-    # Legende rechts außerhalb des Plot-Bereichs
-    ax.legend(loc="center left", bbox_to_anchor=(1.01, 0.5),
-              fontsize="small", frameon=True, framealpha=0.8)
-
-    fig.tight_layout(rect=[0, 0, 0.82, 1])
-    return _fig_to_svg(fig)
+    except Exception as e:
+        logger.exception("Fehler beim Erstellen des Forecast Burndown Charts") # Loggt den vollständigen Traceback
+        raise HTTPException(status_code=500, detail=f"Chart-Erstellung fehlgeschlagen: {e}")
