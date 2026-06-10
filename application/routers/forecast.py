@@ -195,6 +195,9 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
 
 
     # ── Wöchentliche Kapazität pro Rolle berechnen ─────────────────────────────
+    # NEUE LOGIK: 20% der Teamkapazität für Wartung reservieren
+    MAINTENANCE_RESERVATION_PERCENT = 0.20 # 20%
+
     weekly_dev_cap:  Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
     weekly_test_cap: Dict[str, float] = {wk: 0.0 for wk in forecast_active_weeks}
 
@@ -203,11 +206,18 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
         shortname = sr["shortname"]
         hpd       = float(sr["hours_per_day"])
         for wk in forecast_active_weeks:
+            # Effektive Stunden pro Mitarbeiter nach Abwesenheit/Feiertagen
             h = _effective_hours_in_week(shortname, hpd, wk, absences, at_hols)
             if role == "Developer":
                 weekly_dev_cap[wk]  += h
             elif role == "Tester":
                 weekly_test_cap[wk] += h
+    
+    # Kapazität für Wartung abziehen
+    for wk in forecast_active_weeks:
+        weekly_dev_cap[wk]  = max(0.0, weekly_dev_cap[wk]  * (1 - MAINTENANCE_RESERVATION_PERCENT))
+        weekly_test_cap[wk] = max(0.0, weekly_test_cap[wk] * (1 - MAINTENANCE_RESERVATION_PERCENT))
+
 
     # ── Vorwärtsrechnung (Simulation) ──────────────────────────────────────────
     # Kapazitätsgrenzen pro Projekt pro Woche (max. 3 Dev / 1 Tester)
@@ -237,10 +247,10 @@ def calculate_forecast(num_projects: int, forecast_weeks_duration: int) -> Forec
     last_week_any_project_active: Optional[str] = None # Tracks the latest week any project still has remaining work
 
     for wk_index, wk in enumerate(forecast_active_weeks):
-        avail_dev  = weekly_dev_cap.get(wk, 0.0)
-        avail_test = weekly_test_cap.get(wk, 0.0)
+        avail_dev  = weekly_dev_cap.get(wk, 0.0) # Bereits um Wartung reduziert
+        avail_test = weekly_test_cap.get(wk, 0.0) # Bereits um Wartung reduziert
 
-        # Apply capacity to projects
+        # Projekte in Liefertermin-Reihenfolge abarbeiten (Priorität: früheste Due-Date)
         for proj in projects_data:
             pid = proj.project_id
             rem_total = current_impl.get(pid, 0.0) + current_test.get(pid, 0.0)
