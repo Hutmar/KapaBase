@@ -2,35 +2,20 @@
 
 {% block title %}Planungsstatus – Kapaverwaltung{% endblock %}
 
-{% block body_attrs %}hide-navbar-view{% endblock %} {# Fügt die Klasse "hide-navbar-view" zum Body hinzu #}
+{% block page_navbar %}{% endblock %} {# <-- Dieser Block wird leer überschrieben, um die Navbar auszublenden #}
 
 {% block content %}
 <style>
-/* --- HIER SIND DIE SPEZIFISCHEN STYLES FÜR planning_status.html --- */
-
-/* Blendet die Navbar aus, wenn die Klasse "hide-navbar-view" auf dem Body ist */
-body.hide-navbar-view .navbar {
-    display: none;
-}
-
-/* Passt den oberen Padding des Hauptinhalts an, wenn die Navbar ausgeblendet ist */
-body.hide-navbar-view .main-content {
-    padding-top: 20px; /* Reduziert den oberen Platz, da die Navbar fehlt */
-}
-
-/* Passt den oberen Wert des sticky Headers an, da die Navbar fehlt */
+/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
+/* Der Wert für 'top' im #planning-header-wrap ist hier die entscheidende Anpassung */
 #planning-header-wrap {
     position: sticky;
-    top: 0px; /* Ändert von 52px (oder ähnlichem) auf 0px, da Navbar nicht mehr da ist */
+    top: 0px; /* Dieser Wert sollte auf 0 gesetzt werden, da keine Navbar mehr darüber ist */
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
     overflow-x: hidden;
 }
-
-/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
-/* Diese sollten bereits in planning_status.html vorhanden sein */
-
 #planning-body-wrap {
     overflow-x: auto;
     margin-bottom: 24px;
@@ -222,7 +207,7 @@ body.hide-navbar-view .main-content {
 }
 </style>
 
-<!-- ... (Rest des planning_status.html Inhalts) ... -->
+<!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
 <div class="card" style="padding-bottom:0">
     <div class="card-header">
         <h1 id="planning-header-title">Planungsstatus</h1>
@@ -628,6 +613,7 @@ function renderMatrix() {
     const headerWrap = document.getElementById('planning-header-wrap');
     bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
 }
+
 
 // ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
 function renderDragSources() {
