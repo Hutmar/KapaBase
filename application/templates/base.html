@@ -1,138 +1,384 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Kapaverwaltung{% endblock %}</title>
-    
-    <style>
-        /* --- Dies sind nur Beispiel-Styles. Fügen Sie hier Ihre ORIGINALEN Styles ein. --- */
-        :root {
-            --bg: #1e2336;
-            --bg2: #2a3050;
-            --bg3: #30375a;
-            --text: #e0e6ed;
-            --text2: #a7b0c0;
-            --accent: #5e84f2;
-            --accent2: #4CAF50; /* Green */
-            --danger: #e74c3c;
-            --warn: #f39c12;
-            --border: rgba(42,48,80,0.6);
-            --radius: 5px;
-            --font-sans: 'Inter', sans-serif;
-            --font-mono: 'JetBrains Mono', monospace;
-        }
+<link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+<link rel="icon" href="/static/favicon-32x32.png" type="image/png" sizes="32x32">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}KapaBase{% endblock %}</title>
+<style>
+  /* ── Design-System ────────────────────────────────────────────────────── */
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
 
-        body {
-            font-family: var(--font-sans);
-            background-color: var(--bg);
-            color: var(--text);
-            margin: 0;
-            line-height: 1.6;
-        }
+  :root {
+    --bg:        #0f1117;
+    --bg2:       #181c27;
+    --bg3:       #1e2336;
+    --border:    #2a3050;
+    --accent:    #4A90D9;
+    --accent2:   #2ECC71;
+    --warn:      #E67E22;
+    --danger:    #E74C3C;
+    --text:      #d8dde8;
+    --text2:     #8892aa;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --radius:    6px;
+    --shadow:    0 2px 12px rgba(0,0,0,0.4);
+  }
 
-        .navbar {
-            background-color: var(--bg2);
-            padding: 10px 20px;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        .navbar-brand {
-            color: var(--accent);
-            font-weight: 600;
-            font-size: 1.2rem;
-            text-decoration: none;
-        }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    min-height: 100vh;
+  }
 
-        .navbar-nav {
-            list-style: none;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            gap: 15px;
-        }
+  /* ── Navigation ──────────────────────────────────────────────────────── */
+  nav {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 52px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
 
-        .nav-link {
-            color: var(--text2);
-            text-decoration: none;
-            padding: 5px 10px;
-            border-radius: var(--radius);
-        }
+  nav .logo {
+	display: flex;
+	align-items: center;
+	margin-right: 24px;
+	white-space: nowrap;
+	}
 
-        .nav-link:hover {
-            background-color: var(--bg3);
-            color: var(--accent);
-        }
-        
-        .main-content {
-            padding: 20px;
-            padding-top: 72px; /* Standardmäßig Platz für die sticky Navbar */
-        }
+  nav .logo img {
+	height: 28px;   /* Größe fürs Menü */
+	width: auto;
+	display: block;
+	}
 
-        .card {
-            background-color: var(--bg2);
-            border-radius: var(--radius);
-            padding: 20px;
-            margin-bottom: 20px;
-            border: 1px solid var(--border);
-        }
+  nav a {
+    color: var(--text2);
+    text-decoration: none;
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
 
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 16px;
-        }
-        h1, h2 {
-            color: var(--accent);
-            margin: 0;
-        }
-        /* --- Ende der Beispiel-Styles --- */
-    </style>
-    {# Fügen Sie diesen Block hinzu, falls er in Ihrer originalen base.html noch nicht existiert #}
-    {% block extra_head_content %}{% endblock %} 
+  nav a:hover, nav a.active {
+    color: var(--text);
+    background: var(--bg3);
+  }
+
+  nav a.active { color: var(--accent); }
+
+  /* ── Layout ──────────────────────────────────────────────────────────── */
+  .page {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 24px 24px 48px;
+  }
+
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+  h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text); }
+
+  /* ── Karten ──────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  /* ── Tabellen ─────────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th {
+    background: var(--bg3);
+    color: var(--text2);
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  th:hover { color: var(--text); }
+
+  td {
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(42,48,80,0.5);
+    vertical-align: middle;
+  }
+
+  tr:hover td { background: rgba(74,144,217,0.04); }
+
+  /* ── Formulare ───────────────────────────────────────────────────────── */
+  input, select, textarea {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+
+  input[type="color"] {
+    padding: 2px 4px;
+    height: 30px;
+    cursor: pointer;
+  }
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
+
+  /* ── Schaltflächen ───────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    transition: all 0.15s;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .btn-primary  { background: var(--accent);  color: #fff; border-color: var(--accent); }
+  .btn-primary:hover  { background: #5aa0e9; }
+  .btn-success  { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+  .btn-danger   { background: var(--danger);  color: #fff; border-color: var(--danger); }
+  .btn-danger:hover { background: #f05545; }
+  .btn-ghost    { background: transparent; color: var(--text2); border-color: var(--border); }
+  .btn-ghost:hover  { color: var(--text); background: var(--bg3); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-xs { padding: 2px 7px; font-size: 11px; }
+
+  /* ── Badges / Tags ───────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+
+  .badge-dev   { background: rgba(74,144,217,0.2); color: #4A90D9; }
+  .badge-test  { background: rgba(155,89,182,0.2); color: #9B59B6; }
+  .badge-other { background: rgba(136,146,170,0.2); color: #8892aa; }
+
+  /* ── Status-Farben ────────────────────────────────────────────────────── */
+  .status-red       { background: rgba(231,76,60,0.15);   color: #E74C3C; }
+  .status-green     { background: rgba(46,204,113,0.15);  color: #2ECC71; }
+  .status-lightgreen{ background: rgba(46,204,113,0.08);  color: #7DCEA0; }
+  .status-orange    { background: rgba(230,126,34,0.15);  color: #E67E22; }
+
+  /* ── Alerts ──────────────────────────────────────────────────────────── */
+  .alert {
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  .alert-error   { background: rgba(231,76,60,0.15); border-left: 3px solid var(--danger); }
+  .alert-success { background: rgba(46,204,113,0.12); border-left: 3px solid var(--accent2); }
+  .alert-info    { background: rgba(74,144,217,0.12); border-left: 3px solid var(--accent); }
+
+  /* ── Modal ───────────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 200;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .modal-backdrop.open { display: flex; }
+
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    width: min(520px, 95vw);
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+
+  .modal-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 20px;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+  }
+
+  /* ── Form-Grid ───────────────────────────────────────────────────────── */
+  .form-row {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .form-row label { font-size: 13px; color: var(--text2); }
+
+  /* ── Farb-Dot ────────────────────────────────────────────────────────── */
+  .color-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  /* ── Utility ─────────────────────────────────────────────────────────── */
+  .flex     { display: flex; }
+  .flex-gap { display: flex; gap: 8px; align-items: center; }
+  .mt-12    { margin-top: 12px; }
+  .text-dim { color: var(--text2); }
+  .text-mono{ font-family: var(--font-mono); font-size: 12px; }
+  .nowrap   { white-space: nowrap; }
+  .hidden   { display: none !important; }
+
+  /* ── Toast ───────────────────────────────────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 18px;
+    font-size: 13px;
+    z-index: 999;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: all 0.2s;
+    pointer-events: none;
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  #toast.success { border-left: 3px solid var(--accent2); }
+  #toast.error   { border-left: 3px solid var(--danger); }
+
+  /* ── Scrollbar ───────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
 </head>
-{# Der body-Tag sollte so aussehen: #}
-<body class="{% block body_attrs %}{% endblock %}"> 
-    <nav class="navbar">
-        <a href="/" class="navbar-brand">Kapaverwaltung</a>
-        <ul class="navbar-nav">
-            <li class="nav-item"><a href="/planning" class="nav-link">Planung</a></li>
-            <li class="nav-item"><a href="/projects" class="nav-link">Projekte</a></li>
-            <li class="nav-item"><a href="/tasks" class="nav-link">Tasks</a></li>
-            <li class="nav-item"><a href="/staff" class="nav-link">Mitarbeiter</a></li>
-            <li class="nav-item"><a href="/absence" class="nav-link">Abwesenheit</a></li>
-        </ul>
-    </nav>
+<body>
 
-    <div class="main-content">
-        {% block content %}{% endblock %}
-    </div>
+<nav>
+  <span class="logo">
+   <img src="{{ url_for('static', path='logo.png') }}" alt="KapaBase"> &nbsp; KapaBase
+  </span>
+  <a href="/staff"    id="nav-staff">Mitarbeiter</a>
+  <a href="/absence"  id="nav-absence">Abwesenheiten</a>
+  <a href="/projects" id="nav-projects">Projekte</a>
+  <a href="/tasks"    id="nav-tasks">Tasks</a>
+  <a href="/planning" id="nav-planning">Planung</a>
+</nav>
 
-    <!-- Toast-Nachrichten (angenommen, diese sind auch in base.html) -->
-    <div id="toast-container"></div>
-    <script>
-        function toast(message, type = 'info') {
-            const container = document.getElementById('toast-container');
-            if (!container) return;
+<div class="page">
+  {% block content %}{% endblock %}
+</div>
 
-            const toastElement = document.createElement('div');
-            toastElement.className = `toast toast-${type}`;
-            toastElement.textContent = message;
+<div id="toast"></div>
 
-            container.appendChild(toastElement);
+<script>
+// ── Globale Hilfsfunktionen ────────────────────────────────────────────────────
 
-            setTimeout(() => {
-                toastElement.remove();
-            }, 5000);
-        }
-    </script>
-    {% block scripts %}{% endblock %}
+function toast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `show ${type}`;
+  setTimeout(() => { t.className = ''; }, 2800);
+}
+
+async function api(method, url, body=null) {
+  const opts = { method, headers: {'Content-Type': 'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({detail: r.statusText}));
+    throw new Error(err.detail || r.statusText);
+  }
+  if (r.status === 204) return null;
+  return r.json();
+}
+
+// Aktiven Menüeintrag markieren
+(function() {
+  const path = window.location.pathname.split('/')[1];
+  const el = document.getElementById(`nav-${path}`);
+  if (el) el.classList.add('active');
+})();
+</script>
+
+{% block scripts %}{% endblock %}
 </body>
 </html>
