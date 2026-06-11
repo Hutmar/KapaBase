@@ -65,23 +65,24 @@ async def page_worked_hours(request: Request, project_id: int):
 @app.get("/planning_status", response_class=HTMLResponse)
 async def page_planning_status(
     request: Request,
-    project_id: Optional[int] = None,
-    project_name: Optional[str] = None,
-    task_id: Optional[int] = None,
-    task_name: Optional[str] = None,
+    project_ids:   Optional[str] = None,
+    project_names: Optional[str] = None,
+    task_ids:      Optional[str] = None,
+    task_names:    Optional[str] = None,
 ):
     """
     Zeigt eine gefilterte, schreibgeschützte Ansicht der Ressourcenplanung.
-    Filterung erfolgt über URL-Parameter.
+    Filterung erfolgt über URL-Parameter (können kommasepariert sein).
     """
     return templates.TemplateResponse(
         "planning_status.html",
         {
             "request": request,
-            "project_id": project_id,
-            "project_name": project_name,
-            "task_id": task_id,
-            "task_name": task_name,
+            # Diese Parameter werden ins Template übergeben, damit das JS sie verwenden kann.
+            "filter_project_ids": project_ids,
+            "filter_project_names": project_names,
+            "filter_task_ids": task_ids,
+            "filter_task_names": task_names,
         }
     )
     

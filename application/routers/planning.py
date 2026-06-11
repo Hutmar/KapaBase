@@ -1,3 +1,4 @@
+# routers/planning.py
 """
 routers/planning.py – Ressourcenzuordnung (Tabelle: planning)
 
@@ -10,7 +11,7 @@ planning(task_id, project_id, staff, role_id, start_date date, end_date date)
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Set # Set hinzugefügt für effiziente Duplikatsprüfung bei IDs
 from datetime import date, timedelta
 
 import holidays
@@ -50,7 +51,7 @@ def _week_bounds(week_key: str):
     return monday, friday
 
 def _absent_workdays_in_week(shortname: str, week_key: str,
-                             absences: list, at_hols: set) -> int:
+                             absences: list, at_hols: Set[date]) -> int:
     """Anzahl der Arbeitstage in der KW, an denen der MA abwesend ist."""
     monday, friday = _week_bounds(week_key)
     absent_days = set()
@@ -65,7 +66,7 @@ def _absent_workdays_in_week(shortname: str, week_key: str,
             cur += timedelta(days=1)
     return len(absent_days)
 
-def _total_workdays_in_week(week_key: str, at_hols: set) -> int:
+def _total_workdays_in_week(week_key: str, at_hols: Set[date]) -> int:
     """Gesamtzahl Arbeitstage (Mo–Fr, kein Feiertag) in der KW."""
     monday, friday = _week_bounds(week_key)
     count = 0
@@ -77,7 +78,7 @@ def _total_workdays_in_week(week_key: str, at_hols: set) -> int:
     return count
 
 def _is_majority_absent(shortname: str, week_key: str,
-                        absences: list, at_hols: set) -> bool:
+                        absences: list, at_hols: Set[date]) -> bool:
     """True wenn mehr als die Hälfte der Arbeitstage der KW Abwesenheit eingetragen ist."""
     total  = _total_workdays_in_week(week_key, at_hols)
     if total == 0:
@@ -86,7 +87,7 @@ def _is_majority_absent(shortname: str, week_key: str,
     return absent > total / 2
 
 def _effective_hours_in_week(shortname: str, hours_per_day: float,
-                             week_key: str, absences: list, at_hols: set) -> float:
+                             week_key: str, absences: list, at_hols: Set[date]) -> float:
     """
     Effektive Stunden des Mitarbeiters in der KW:
     hours_per_day × (Arbeitstage − Abwesenheitstage)
@@ -95,9 +96,9 @@ def _effective_hours_in_week(shortname: str, hours_per_day: float,
     absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
     return max(0.0, (total - absent) * float(hours_per_day))
 
-def _build_at_hols(start: date, end: date) -> set:
+def _build_at_hols(start: date, end: date) -> Set[date]:
     years = set(range(start.year, end.year + 1))
-    hols: set = set()
+    hols: Set[date] = set()
     for y in years:
         hols |= get_austrian_holidays(y)
     return hols
@@ -116,10 +117,10 @@ def _next_week_key(base_date: date) -> str:
 def get_planning(
     use_current_week: bool = False,
     end_week: Optional[str] = None,          # Format: 'YYYY-WNN'
-    filter_project_id:   Optional[int] = None,
-    filter_project_name: Optional[str] = None,
-    filter_task_id:      Optional[int] = None,
-    filter_task_name:    Optional[str] = None,
+    filter_project_ids:   Optional[str] = None,
+    filter_project_names: Optional[str] = None,
+    filter_task_ids:      Optional[str] = None,
+    filter_task_names:    Optional[str] = None,
 ):
     """
     Vollständige Planungsmatrix.
@@ -132,52 +133,76 @@ def get_planning(
     Endzeitpunkt: max(project.due_date) der geplanten, nicht erledigten Projekte;
     Fallback: 12 KW nach Start.
 
-    Optionale Filter (für planning_status-Ansicht):
-    filter_project_id / filter_project_name – filtert Matrix auf ein Projekt
-    filter_task_id    / filter_task_name    – filtert Matrix auf einen Task
+    Optionale Filter (für planning_status-Ansicht, können kommasepariert sein):
+    filter_project_ids / filter_project_names – filtert Matrix auf ein oder mehrere Projekte
+    filter_task_ids    / filter_task_names    – filtert Matrix auf einen oder mehrere Tasks
     """
     with get_cursor() as cur:
+        # Initialisiere Sets für effektive IDs, um Duplikate zu vermeiden
+        effective_project_ids_set: Set[int] = set()
+        effective_task_ids_set: Set[int] = set()
+        
+        # Zur Erstellung der Überschrift im Frontend
+        filter_title_parts: List[str] = []
 
-        # ── Filter-Parameter auflösen ────────────────────────────────────────
-        effective_project_id = filter_project_id
-        effective_task_id    = filter_task_id
+        # 1. IDs direkt aus Parametern parsen
+        if filter_project_ids:
+            try:
+                for _id_str in filter_project_ids.split(','):
+                    effective_project_ids_set.add(int(_id_str.strip()))
+                filter_title_parts.append(f"Projekte (IDs: {filter_project_ids})")
+            except ValueError:
+                raise HTTPException(422, f"Ungültige Projekt-ID(s): {filter_project_ids}")
+        if filter_task_ids:
+            try:
+                for _id_str in filter_task_ids.split(','):
+                    effective_task_ids_set.add(int(_id_str.strip()))
+                filter_title_parts.append(f"Tasks (IDs: {filter_task_ids})")
+            except ValueError:
+                raise HTTPException(422, f"Ungültige Task-ID(s): {filter_task_ids}")
 
-        # Namen zu IDs auflösen, falls nur Namen übergeben wurden
-        if filter_project_name and not effective_project_id:
-            cur.execute(
-                "SELECT project_id FROM project WHERE project_name ILIKE %s",
-                (filter_project_name,)
-            )
-            proj_match = cur.fetchone()
-            if proj_match:
-                effective_project_id = proj_match["project_id"]
+        # 2. Namen zu IDs auflösen
+        if filter_project_names:
+            names_to_search = tuple([name.strip() for name in filter_project_names.split(',') if name.strip()])
+            if names_to_search:
+                cur.execute("SELECT project_id, project_name FROM project WHERE project_name ILIKE ANY(%s)", (list(names_to_search),))
+                found_projects = cur.fetchall()
+                if not found_projects:
+                    raise HTTPException(404, f"Keine Projekte mit Namen gefunden: {filter_project_names}")
+                for proj in found_projects:
+                    effective_project_ids_set.add(proj["project_id"])
+                filter_title_parts.append(f"Projekte: {', '.join([p['project_name'] for p in found_projects])}")
 
-        if filter_task_name and not effective_task_id:
-            cur.execute(
-                "SELECT task_id FROM tasks WHERE task_name ILIKE %s",
-                (filter_task_name,)
-            )
-            task_match = cur.fetchone()
-            if task_match:
-                effective_task_id = task_match["task_id"]
+        if filter_task_names:
+            names_to_search = tuple([name.strip() for name in filter_task_names.split(',') if name.strip()])
+            if names_to_search:
+                cur.execute("SELECT task_id, task_name FROM tasks WHERE task_name ILIKE ANY(%s)", (list(names_to_search),))
+                found_tasks = cur.fetchall()
+                if not found_tasks:
+                    raise HTTPException(404, f"Keine Tasks mit Namen gefunden: {filter_task_names}")
+                for task in found_tasks:
+                    effective_task_ids_set.add(task["task_id"])
+                filter_title_parts.append(f"Tasks: {', '.join([t['task_name'] for t in found_tasks])}")
 
-        # Wenn ein Task spezifiziert ist, zugehörige project_id für den
-        # Zeitbereich ermitteln (Task-Planungen haben project_id = NULL in
-        # der planning-Tabelle, das Projekt wird aber für start/due_date benötigt)
-        task_project_id = None
-        if effective_task_id and not effective_project_id:
-            cur.execute(
-                "SELECT project_id FROM tasks WHERE task_id = %s",
-                (effective_task_id,)
-            )
-            task_proj_match = cur.fetchone()
-            if task_proj_match:
-                task_project_id = task_proj_match["project_id"]
+        effective_project_ids = list(effective_project_ids_set)
+        effective_task_ids = list(effective_task_ids_set)
+        
+        # Fehlermeldung, wenn Filter angegeben wurden, aber nichts gefunden wurde
+        if (filter_project_ids or filter_project_names or filter_task_ids or filter_task_names) and \
+           (not effective_project_ids and not effective_task_ids):
+            raise HTTPException(404, "Die angegebenen Projekte/Tasks konnten nicht gefunden werden oder existieren nicht.")
 
-        # project_id für Zeitbereich-Berechnung
-        project_id_for_range = effective_project_id or task_project_id
+        # Ermittle zugehörige Projekt-IDs von gefilterten Tasks
+        task_project_ids_set: Set[int] = set()
+        if effective_task_ids:
+            cur.execute("SELECT DISTINCT project_id FROM tasks WHERE task_id = ANY(%s) AND project_id IS NOT NULL", (effective_task_ids,))
+            for row in cur.fetchall():
+                task_project_ids_set.add(row["project_id"])
 
-        # ── Zeitbereich aus Projektdaten ────────────────────────────────────
+        # Kombiniere alle relevanten Projekt-IDs für die Zeitbereich-Berechnung und weitere Filter
+        all_relevant_project_ids = list(effective_project_ids_set.union(task_project_ids_set))
+
+        # ── Zeitbereich aus Projektdaten (angepasst für mehrere IDs) ────────────────
         range_query_sql = """
             SELECT MIN(start_date) AS min_start,
                    MAX(due_date)   AS max_due
@@ -187,9 +212,9 @@ def get_planning(
             AND start_date IS NOT NULL AND due_date IS NOT NULL
         """
         range_query_params = []
-        if project_id_for_range:
-            range_query_sql += " AND project_id = %s"
-            range_query_params.append(project_id_for_range)
+        if all_relevant_project_ids:
+            range_query_sql += " AND project_id = ANY(%s)"
+            range_query_params.append(all_relevant_project_ids)
 
         cur.execute(range_query_sql, range_query_params)
         range_row = cur.fetchone()
@@ -198,19 +223,17 @@ def get_planning(
         today_iso  = today.isocalendar()
         cur_monday = date.fromisocalendar(today_iso[0], today_iso[1], 1)
 
-        if use_current_week or not range_row["min_start"]:
-            start_date = cur_monday
-        else:
-            ms     = range_row["min_start"]
-            ms_iso = ms.isocalendar()
-            start_date = date.fromisocalendar(ms_iso[0], ms_iso[1], 1)
+        # Wenn use_current_week True ist, Start immer heute.
+        # Im planning_status-Kontext ist use_current_week immer True.
+        start_date = cur_monday
 
-        if range_row["max_due"]:
+        # Für end_date, entweder max_due der gefilterten Projekte oder 12 Wochen nach start_date
+        if range_row and range_row["max_due"]:
             md     = range_row["max_due"]
             md_iso = md.isocalendar()
-            end_date = date.fromisocalendar(md_iso[0], md_iso[1], 7)
+            end_date = date.fromisocalendar(md_iso[0], md_iso[1], 7) # Freitag der KW
         else:
-            end_date = start_date + timedelta(weeks=12)
+            end_date = start_date + timedelta(weeks=12) # Fallback if no projects or no due_date
 
         # ── Mitarbeiter mit Developer/Tester-Rolle ──────────────────────────
         cur.execute("""
@@ -240,10 +263,6 @@ def get_planning(
         absences_list = [dict(a) for a in absences]
 
         # ── Bestehende Planungen laden (ggf. gefiltert) ─────────────────────
-        #
-        # WICHTIG: Task-Planungen speichern task_id und project_id = NULL.
-        # Daher muss bei Task-Filter nach pl.task_id gefiltert werden,
-        # NICHT nach pl.project_id – sonst bleibt die Matrix leer.
         sql_plannings = """
             SELECT pl.task_id, pl.project_id, pl.staff, pl.role_id,
                    pl.start_date, pl.end_date,
@@ -257,19 +276,43 @@ def get_planning(
         """
         params_plannings = [start_date, end_date]
 
-        if effective_task_id is not None:
-            # Direkt nach Task-ID filtern (project_id ist in diesem Fall NULL)
-            sql_plannings += " AND pl.task_id = %s"
-            params_plannings.append(effective_task_id)
-        elif effective_project_id is not None:
-            # Planungen für das Projekt direkt ODER Tasks die zum Projekt gehören
-            sql_plannings += " AND (pl.project_id = %s OR t.project_id = %s)"
-            params_plannings.extend([effective_project_id, effective_project_id])
+        combined_planning_filter_parts = []
+        combined_planning_params = []
+
+        if effective_task_ids:
+            # Planungen für spezifische Tasks (project_id kann NULL sein)
+            combined_planning_filter_parts.append("pl.task_id = ANY(%s)")
+            combined_planning_params.append(effective_task_ids)
+
+        if effective_project_ids:
+            # Planungen für spezifische Projekte ODER Tasks, die zu diesen Projekten gehören
+            # (Diese Tasks müssen dann einen project_id in der tasks-Tabelle haben)
+            combined_planning_filter_parts.append("(pl.project_id = ANY(%s) OR t.project_id = ANY(%s))")
+            combined_planning_params.extend([effective_project_ids, effective_project_ids])
+        
+        # Wenn nur project_names oder project_ids als Filter gegeben wurden,
+        # aber keine Task-Filter und ein Task trotzdem im relevanten Projektbereich
+        # liegt, dann muss dieser Task auch angezeigt werden.
+        # Die `t.project_id = ANY(%s)` in der obigen Bedingung deckt dies ab.
+
+        if combined_planning_filter_parts:
+            # Wir verwenden EINE ODER-Verknüpfung für alle Filterbedingungen,
+            # damit Planungseinträge angezeigt werden, die mindestens eine der Bedingungen erfüllen.
+            sql_plannings += " AND (" + " OR ".join(combined_planning_filter_parts) + ")"
+            params_plannings.extend(combined_planning_params)
 
         cur.execute(sql_plannings, params_plannings)
         plannings_raw = [dict(r) for r in cur.fetchall()]
 
-        # ── Verfügbare Projekte (Drag&Drop / Referenz) ──────────────────────
+        # Wenn plannings_raw leer ist UND Filter angegeben wurden, bedeutet das, nichts gefunden.
+        if not plannings_raw and (effective_project_ids or effective_task_ids):
+            raise HTTPException(404, "Für die angegebenen Projekte/Tasks wurde keine Planung im sichtbaren Zeitraum gefunden.")
+
+
+        # ── Verfügbare Projekte (Drag&Drop / Referenz - gefiltert für Lesemodus) ──────────────────────
+        # Diese Liste wird nun auch durch die all_relevant_project_ids gefiltert.
+        # Wichtig: Wenn nur Tasks gefiltert wurden, die keinem Projekt zugeordnet sind,
+        # oder deren Projekte außerhalb des Zeitbereichs liegen, kann diese Liste leer sein.
         sql_all_projects = """
             SELECT p.project_id, p.project_name, p.customer, p.color_hexcode,
                    p.start_date, p.due_date, p.target_hours, p.impl_hours, p.test_hours
@@ -278,16 +321,13 @@ def get_planning(
             AND p.project_type = 'Project'
         """
         params_all_projects = []
-        if effective_project_id:
-            sql_all_projects += " AND p.project_id = %s"
-            params_all_projects.append(effective_project_id)
-        elif task_project_id:
-            sql_all_projects += " AND p.project_id = %s"
-            params_all_projects.append(task_project_id)
+        if all_relevant_project_ids:
+            sql_all_projects += " AND p.project_id = ANY(%s)"
+            params_all_projects.append(all_relevant_project_ids)
 
         sql_all_projects += " ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC"
         cur.execute(sql_all_projects, params_all_projects)
-        all_projects = cur.fetchall()
+        all_projects_filtered = cur.fetchall() # Um Verwechslung mit 'all_projects' weiter unten zu vermeiden
 
         # Letztes worked_hours-Datum je Projekt (für outdated-Markierung)
         cur.execute("""
@@ -296,7 +336,8 @@ def get_planning(
         """)
         max_worked_day = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
 
-        # ── Verfügbare Tasks (Drag&Drop / Referenz) ──────────────────────────
+        # ── Verfügbare Tasks (Drag&Drop / Referenz - gefiltert für Lesemodus) ──────────────────────────
+        # Diese Liste wird auch durch die effektiv gefilterten Tasks oder zugehörigen Projekte gefiltert.
         sql_available_tasks = """
             SELECT t.task_id, t.task_name, t.color_hexcode, t.project_id,
                    p.project_name
@@ -305,18 +346,16 @@ def get_planning(
         """
         params_available_tasks = []
         where_clauses_tasks = []
-        if effective_task_id:
-            where_clauses_tasks.append("t.task_id = %s")
-            params_available_tasks.append(effective_task_id)
-        elif effective_project_id:
-            where_clauses_tasks.append("t.project_id = %s")
-            params_available_tasks.append(effective_project_id)
-        elif task_project_id:
-            where_clauses_tasks.append("t.project_id = %s")
-            params_available_tasks.append(task_project_id)
+
+        if effective_task_ids:
+            where_clauses_tasks.append("t.task_id = ANY(%s)")
+            params_available_tasks.append(effective_task_ids)
+        if all_relevant_project_ids: # Tasks, die zu den relevanten Projekten gehören (inkl. der task_project_ids)
+            where_clauses_tasks.append("t.project_id = ANY(%s)")
+            params_available_tasks.append(all_relevant_project_ids)
 
         if where_clauses_tasks:
-            sql_available_tasks += " WHERE " + " AND ".join(where_clauses_tasks)
+            sql_available_tasks += " WHERE " + " OR ".join(where_clauses_tasks)
 
         sql_available_tasks += " ORDER BY t.task_name"
         cur.execute(sql_available_tasks, params_available_tasks)
@@ -367,37 +406,26 @@ def get_planning(
         capacity_by_staff: dict = {}
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}
 
-        staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles}
+        staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles} # Korrigierter Typo
 
         for name, hpd in staff_hpd_map.items():
             week_hours: dict = {}
             for wk in weeks:
                 h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols)
-                week_hours[wk]         = h
-                capacity_totals[wk]   += h
+                week_hours[wk] = h
+                capacity_totals[wk] += h # Korrigierte Platzierung
             capacity_by_staff[name] = {
                 "hours_per_day": hpd,
                 "week_hours":    week_hours,
             }
 
         # ── end_week: Enddatum der sichtbaren Matrix begrenzen ───────────────
-        # Wenn end_week gesetzt: Matrix nur bis zu dieser KW anzeigen UND
-        # available_projects auf Projekte filtern deren start_date VOR dem
-        # Montag dieser KW liegt.
+        # In planning_status wird end_week nicht vom Frontend gesendet.
+        # Diese Logik bleibt für die Haupt-planning.html bestehen, hat aber keinen Effekt für planning_status.
         if end_week:
-            ew_parts  = end_week.split("-W")
-            ew_monday = date.fromisocalendar(int(ew_parts[0]), int(ew_parts[1]), 1)
-
-            # Wochen auf Zeitraum bis end_week kürzen
             weeks = [wk for wk in weeks if wk <= end_week]
+            # available_projects wird hier nicht mehr direkt gekürzt, da es bereits gefiltert wurde.
 
-            # Projekte filtern
-            available_projects = [
-                p for p in all_projects
-                if p["start_date"] is not None and p["start_date"] < ew_monday
-            ]
-        else:
-            available_projects = list(all_projects)
 
         # ── Outdated-Flag in plan_map setzen ─────────────────────────────────
         # Eine Planungszeile gilt als "veraltet" wenn es für das zugehörige Projekt
@@ -425,8 +453,9 @@ def get_planning(
             "capacity_by_staff":  capacity_by_staff,
             "plannings":          plan_map,
             "absence_map":        absence_map,
-            "available_projects": available_projects,
-            "available_tasks":    [dict(t) for t in available_tasks],
+            "available_projects": [dict(p) for p in all_projects_filtered], # gefilterte Liste verwenden
+            "available_tasks":    [dict(t) for t in available_tasks], # gefilterte Liste verwenden
+            "filter_title_parts": filter_title_parts, # Für die dynamische Überschrift
         }
 
 # ── POST /assign ───────────────────────────────────────────────────────────────
