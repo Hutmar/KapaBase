@@ -6,15 +6,31 @@
 
 {% block content %}
 <style>
-/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
+/* --- HIER SIND DIE SPEZIFISCHEN STYLES FÜR planning_status.html --- */
+
+/* Blendet die Navbar aus, wenn die Klasse "hide-navbar-view" auf dem Body ist */
+body.hide-navbar-view .navbar {
+    display: none;
+}
+
+/* Passt den oberen Padding des Hauptinhalts an, wenn die Navbar ausgeblendet ist */
+body.hide-navbar-view .main-content {
+    padding-top: 20px; /* Reduziert den oberen Platz, da die Navbar fehlt */
+}
+
+/* Passt den oberen Wert des sticky Headers an, da die Navbar fehlt */
 #planning-header-wrap {
     position: sticky;
-    top: 0px; /* Ändert von 52px auf 0px, da Navbar nicht mehr da ist */
+    top: 0px; /* Ändert von 52px (oder ähnlichem) auf 0px, da Navbar nicht mehr da ist */
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
     overflow-x: hidden;
 }
+
+/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
+/* Diese sollten bereits in planning_status.html vorhanden sein */
+
 #planning-body-wrap {
     overflow-x: auto;
     margin-bottom: 24px;
@@ -87,15 +103,13 @@
     position: relative;
     box-sizing: border-box;
 }
-/* Deaktivierung der Droptarget-Styles für die schreibgeschützte Ansicht */
 .planning-body-table td.droptarget {
-    cursor: default; /* Nicht zulassen, dass es wie ein Drop-Ziel aussieht */
+    cursor: default;
 }
 .planning-body-table td.droptarget:hover {
-    outline: none; /* Kein Hervorheben beim Hover */
+    outline: none;
 }
 
-/* Abwesenheit / Vergangenheit / gesperrt */
 .absent-cell {
     background: repeating-linear-gradient(
         -45deg,
@@ -124,7 +138,6 @@
         transparent 4px, transparent 8px
     );
 }
-/* Planungs-Chip */
 .planning-cell {
     display: inline-flex;
     align-items: center;
@@ -142,13 +155,11 @@
     position: relative;
     vertical-align: middle;
 }
-/* .remove-btn Styles entfernt, da der Button in dieser Ansicht nicht gerendert wird */
 .planning-cell.outdated {
     opacity: 0.45;
     text-decoration: line-through;
     filter: grayscale(60%);
 }
-/* Kapazitäts-Summen-Zeile */
 .cap-row td {
     background: var(--bg3);
     font-family: var(--font-mono);
@@ -178,7 +189,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    cursor: default; /* Cursor default, da Zuweisung deaktiviert ist */
+    cursor: default;
     font-size: 12px;
     border-bottom: 1px solid rgba(42,48,80,0.3);
 }
@@ -188,7 +199,6 @@
     outline: 1px solid var(--accent);
     outline-offset: -1px;
 }
-/* Styles für den Forecast-Modal (bleibt, auch wenn Button entfernt ist) */
 .forecast-modal .modal {
     max-width: 90vw;
     width: fit-content;
@@ -207,13 +217,12 @@
     justify-content: center;
 }
 
-/* Angepasster Abstand zwischen Überschrift und Tabelle */
 .card-header {
-    padding-bottom: 8px; /* Weniger Abstand als Standard */
+    padding-bottom: 8px;
 }
 </style>
 
-<!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
+<!-- ... (Rest des planning_status.html Inhalts) ... -->
 <div class="card" style="padding-bottom:0">
     <div class="card-header">
         <h1 id="planning-header-title">Planungsstatus</h1>
@@ -232,10 +241,8 @@
     </div>
 </div>
 
-<!-- Klick-Zuweisung Dropdown (global, wird per JS positioniert, aber inaktiv) -->
 <div id="cell-dropdown" class="cell-dropdown" style="display:none"></div>
 
-<!-- Zuordnungs-Modal (Rollenauswahl – inaktiv) -->
 <div class="modal-backdrop" id="assign-modal">
     <div class="modal" style="width:min(360px,95vw)">
         <div class="modal-title">Zuweisung</div>
@@ -251,7 +258,6 @@
     </div>
 </div>
 
-<!-- NEUES MODALES FENSTER FÜR FORECAST-CHART -->
 <div class="modal-backdrop forecast-modal" id="forecast-modal" style="display:none;">
     <div class="modal">
         <div class="modal-title">Liefertermin Forecast</div>
@@ -488,7 +494,7 @@ function renderMatrix() {
     let kwRowHtml = '<tr class="kw-row"><th class="staff-col">Mitarbeiter / Rolle</th>';
     weeks.forEach(wk => {
         const isCurrent = (wk === currentWk);
-        const isPast    = wk < currentWk;
+        const isPast       = wk < currentWk;
         const kwNum = parseInt(wk.split('-W')[1]);
         const mon   = weekMonday(wk);
         const fri   = weekFriday(wk);

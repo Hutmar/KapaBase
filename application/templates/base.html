@@ -6,7 +6,7 @@
     <title>{% block title %}Kapaverwaltung{% endblock %}</title>
     
     <style>
-        /* --- Bestehende globale Styles in base.html (hier nur als Platzhalter) --- */
+        /* --- Dies sind nur Beispiel-Styles. Fügen Sie hier Ihre ORIGINALEN Styles ein. --- */
         :root {
             --bg: #1e2336;
             --bg2: #2a3050;
@@ -72,7 +72,7 @@
         
         .main-content {
             padding: 20px;
-            padding-top: 72px; /* Platz für die sticky Navbar */
+            padding-top: 72px; /* Standardmäßig Platz für die sticky Navbar */
         }
 
         .card {
@@ -89,32 +89,17 @@
             align-items: center;
             margin-bottom: 16px;
         }
-
         h1, h2 {
             color: var(--accent);
             margin: 0;
         }
-
-        /* --- Neue Styles zum Ausblenden der Navbar --- */
-        body.hide-navbar-view .navbar {
-            display: none; /* Blendet die Navigationsleiste aus */
-        }
-
-        body.hide-navbar-view .main-content {
-            padding-top: 20px; /* Reduziert den oberen Padding, da die Navbar fehlt */
-        }
-
-        /* Optional: Toast Container anpassen, wenn Navbar fehlt */
-        #toast-container {
-            position: fixed;
-            top: 20px; /* Nicht mehr unter der Navbar versteckt */
-            right: 20px;
-            z-index: 1000;
-        }
+        /* --- Ende der Beispiel-Styles --- */
     </style>
-    {% block extra_head_content %}{% endblock %} {# Hier können zusätzliche Inhalte in den Head eingefügt werden #}
+    {# Fügen Sie diesen Block hinzu, falls er in Ihrer originalen base.html noch nicht existiert #}
+    {% block extra_head_content %}{% endblock %} 
 </head>
-<body class="{% block body_attrs %}{% endblock %}"> {# Hier wird die Klasse "hide-navbar-view" eingefügt #}
+{# Der body-Tag sollte so aussehen: #}
+<body class="{% block body_attrs %}{% endblock %}"> 
     <nav class="navbar">
         <a href="/" class="navbar-brand">Kapaverwaltung</a>
         <ul class="navbar-nav">
@@ -133,7 +118,6 @@
     <!-- Toast-Nachrichten (angenommen, diese sind auch in base.html) -->
     <div id="toast-container"></div>
     <script>
-        // Einfache Toast-Funktion, falls noch nicht vorhanden
         function toast(message, type = 'info') {
             const container = document.getElementById('toast-container');
             if (!container) return;
@@ -146,7 +130,7 @@
 
             setTimeout(() => {
                 toastElement.remove();
-            }, 5000); // Toast verschwindet nach 5 Sekunden
+            }, 5000);
         }
     </script>
     {% block scripts %}{% endblock %}
