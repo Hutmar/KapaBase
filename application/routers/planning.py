@@ -327,7 +327,7 @@ def get_planning(
         capacity_by_staff: dict = {}
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}  
 
-        staff_hpd_map = {r["shortname"]: float(r["hours_per_per_day"]) for r in staff_roles}  
+        staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles}  
 
         for name, hpd in staff_hpd_map.items():
             week_hours: dict = {}
