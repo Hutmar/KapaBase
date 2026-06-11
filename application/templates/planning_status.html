@@ -1,12 +1,15 @@
 {% extends "base.html" %}
+
 {% block title %}Planungsstatus – Kapaverwaltung{% endblock %}
+
+{% block body_attrs %}hide-navbar-view{% endblock %} {# Fügt die Klasse "hide-navbar-view" zum Body hinzu #}
 
 {% block content %}
 <style>
 /* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
 #planning-header-wrap {
     position: sticky;
-    top: 52px;
+    top: 0px; /* Ändert von 52px auf 0px, da Navbar nicht mehr da ist */
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
@@ -267,15 +270,13 @@
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
 let planningData = null;
-let dragPayload  = null;   // Drag & Drop entfernt, aber Payload-Struktur beibehalten für Klick-Zuweisung
-let assignTarget = null;   // für Modal-Rollenauswahl
-let openDropdownCell = null; // aktuell geöffnete Zelle für Click-Dropdown
-let _dropdownItems = [];   // Speichert die Liste der Projekt/Task-Items für das Dropdown
-let _filteredDropdownItems = []; // Speichert die aktuell gefilterten Items
-let _dropdownSearchTerm = ''; // Aktueller Suchterm für das Dropdown
-let _activeDropdownItemIndex = -1; // Index des aktuell aktiven (hervorgehobenen) Items
-// Diese Variablen sind für planning_status nicht relevant, aber müssen deklariert sein,
-// falls Funktionen aus planning.js sie erwarten würden.
+let dragPayload  = null;
+let assignTarget = null;
+let openDropdownCell = null;
+let _dropdownItems = [];
+let _filteredDropdownItems = [];
+let _dropdownSearchTerm = '';
+let _activeDropdownItemIndex = -1;
 let _allProjectStatusRows = [];
 let _allAvailableWeeksForDropdown = null;
 
@@ -383,10 +384,6 @@ async function loadPlanning() {
         return;
     }
 
-    // `ensureWeekDropdownsPopulated` und `toggleTimeRangeFilters` sind hier nicht relevant,
-    // da die Filterleiste entfernt wurde und Dropdowns nicht existieren.
-    // Die `planningData.weeks` werden jedoch aus dem Backend benötigt und sind Teil des planningData-Objekts.
-
     try { renderMatrix(); }
     catch(e) {
         toast('Render-Fehler: ' + e.message, 'error');
@@ -401,19 +398,15 @@ async function loadPlanning() {
         document.getElementById('planning-thead').innerHTML = '';
         return;
     }
-    renderDragSources(); // Empties D&D sections
+    renderDragSources();
 }
 
-// `ensureWeekDropdownsPopulated` und `populateWeekDropdown` sind nicht mehr relevant
-// da die Filterleiste entfernt wurde. Die Dummy-Funktionen können bleiben oder entfernt werden.
 async function ensureWeekDropdownsPopulated() { /* Inaktiv */ }
 function populateWeekDropdown(selectId, weeks, currentVal, defaultLabel) { /* Inaktiv */ }
 function toggleTimeRangeFilters() { /* Inaktiv */ }
 
 
-// Listener für Filterelemente sind entfernt oder deaktiviert in dieser schreibgeschützten Ansicht
 document.addEventListener('DOMContentLoaded', () => {
-    // setGlobalFilterParams(); // Nicht mehr nötig, da Jinja2-Variablen direkt verwendet werden
     loadPlanning();
 });
 
@@ -602,10 +595,9 @@ function renderMatrix() {
                         </div>`; // remove-btn hier entfernt
             }).join('');
 
-            // data-attrs für Klick-Zuweisung sind weiterhin vorhanden, aber onclick ist inaktiv
             row += `<td class="droptarget${partialClass}"
-                    ondragover="event.preventDefault();"  /* Drag & Drop disabled */
-                    ondrop="event.preventDefault();"      /* Drag & Drop disabled */
+                    ondragover="event.preventDefault();"
+                    ondrop="event.preventDefault();"
                     onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"
                     title="${tooltip}">${chips}</td>`;
         });
@@ -633,9 +625,6 @@ function renderMatrix() {
 
 // ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
 function renderDragSources() {
-    // Da keine D&D Sektionen mehr im planning_status.html sind,
-    // können diese Zeilen im Prinzip entfallen oder bleiben inaktiv.
-    // Falls sie dennoch existieren sollten:
     const projList = document.getElementById('proj-drag-list');
     if (projList) projList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
     const taskList = document.getElementById('task-drag-list');
@@ -649,13 +638,11 @@ function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }
 
 // ── Klick-Zuweisung (deaktiviert) ───────────────────────────────────────────
 function cellClick(e, staff, roleId, weekKey) {
-    if (e.target.classList.contains('remove-btn')) return; // Wird nicht auftreten, da remove-btn entfernt
+    if (e.target.classList.contains('remove-btn')) return;
     e.stopPropagation();
     toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
-    // Die Logik zum Öffnen des Dropdowns wird nicht ausgeführt
 }
 
-// Rendert die Items im Dropdown (bleibt bestehen, da es Teil der cellClick-Logik ist, aber inaktiv)
 function renderDropdownItems(itemsToRender) {
     const dd = document.getElementById('cell-dropdown');
     if (!dd) return;
@@ -671,13 +658,11 @@ function renderDropdownItems(itemsToRender) {
     highlightActiveDropdownItem();
 }
 
-// Handhabung von Tastatureingaben für Type-ahead im Dropdown (deaktiviert)
 function handleDropdownKeydown(e) {
     e.preventDefault();
     console.log("Tastatureingaben für Dropdown in dieser Ansicht deaktiviert.");
 }
 
-// Filtert die Dropdown-Items (bleibt bestehen, da Teil der handleDropdownKeydown-Logik, aber inaktiv)
 function filterDropdownItems() {
     if (_dropdownSearchTerm === '') {
         _filteredDropdownItems = [..._dropdownItems];
@@ -691,7 +676,6 @@ function filterDropdownItems() {
     renderDropdownItems(_filteredDropdownItems);
 }
 
-// Highlight Active Dropdown Item (bleibt bestehen, da Teil der renderDropdownItems-Logik, aber inaktiv)
 function highlightActiveDropdownItem() {
     const dd = document.getElementById('cell-dropdown');
     if (!dd) return;
@@ -705,7 +689,6 @@ function highlightActiveDropdownItem() {
     }
 }
 
-// dropdownAssign wird nicht direkt aufgerufen, da cellClick inaktiv ist
 async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) {
     e.stopPropagation();
     toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
@@ -721,7 +704,6 @@ function closeDropdown() {
     _filteredDropdownItems = [];
 }
 
-// Klick außerhalb schließt Dropdown (bleibt bestehen für sauberes UI)
 document.addEventListener('click', (e) => {
     const dd = document.getElementById('cell-dropdown');
     if (dd && dd.style.display === 'block' && !dd.contains(e.target) && !e.target.closest('.droptarget')) {
@@ -757,7 +739,6 @@ async function confirmAssign() {
 }
 
 // ── Projektstatus (entfernt) ─────────────────────────────────────────────
-// loadProjectStatus und filterProjectStatus sind nicht mehr in dieser Ansicht vorhanden
 
 // ── Hilfsfunktionen (unverändert) ────────────────────────────────────────────────────────────
 function contrastColor(hex) {
@@ -799,16 +780,5 @@ function closeForecastModal() {
         document.getElementById('forecast-chart-container').innerHTML = '<p class="text-dim">Forecast-Ansicht in diesem Modus deaktiviert.</p>';
     }
 }
-
-// Event Listener für den Forecast-Button (entfernt, da der Button nicht existiert)
-// document.addEventListener('DOMContentLoaded', () => {
-//     const showForecastBtn = document.getElementById('show-forecast-btn');
-//     if (showForecastBtn) {
-//         showForecastBtn.addEventListener('click', showForecast);
-//     }
-// });
-
-// ── Init ──────────────────────────────────────────────────────────────────────
-// loadPlanning() wird bereits über DOMContentLoaded aufgerufen
 </script>
 {% endblock %}
