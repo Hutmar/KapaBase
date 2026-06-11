@@ -304,15 +304,25 @@
             <div class="filter-box">
                 <label class="flex-gap text-dim" style="font-size:12px">
                     <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadPlanning()">
-                    Ab aktueller KW starten
+                    Ab aktueller KW <!-- Textänderung -->
                 </label>
+
+                <!-- NEU: "Von KW" Dropdown -->
                 <label class="flex-gap text-dim" style="font-size:12px">
-                    <input type="checkbox" id="use-end-week" style="width:auto" onchange="toggleEndWeek()">
-                    Bis KW:
-                    <select id="end-week-select" style="width:110px" disabled onchange="loadPlanning()">
-                        <option value="">– wählen –</option>
+                    Von KW:
+                    <select id="start-week-select" style="width:110px" disabled onchange="loadPlanning()">
+                        <option value="">– auto –</option> <!-- Default, Backend wählt min(start_date) -->
                     </select>
                 </label>
+
+                <!-- "Bis KW" Dropdown - Checkbox entfernt, immer aktiv -->
+                <label class="flex-gap text-dim" style="font-size:12px">
+                    Bis KW:
+                    <select id="end-week-select" style="width:110px" onchange="loadPlanning()"> <!-- disabled Attribut entfernt -->
+                        <option value="">– kein –</option>
+                    </select>
+                </label>
+
                 <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
 
                 <!-- Forecast-Bereich: Layout angepasst für nebeneinander -->
@@ -352,6 +362,7 @@
 </div>  
 
 <!-- ── Geänderter Bereich für Projektstatus (Full Width) ─────────────────── -->
+<!-- Die Sektionen "Tasks" und "Projekte" wurden entfernt -->
 <div class="card" style="margin-top:20px">
     <h2>Planungsstatus</h2>
     <!-- Suchfeld für Planungsstatus -->
@@ -422,6 +433,8 @@ let _filteredDropdownItems = []; // Speichert die aktuell gefilterten Items
 let _dropdownSearchTerm = ''; // Aktueller Suchterm für das Dropdown
 let _activeDropdownItemIndex = -1; // Index des aktuell aktiven (hervorgehobenen) Items
 let _allProjectStatusRows = []; // Speichert die ungefilterten Projektstatus-Zeilen
+let _allAvailableWeeksForDropdown = null; // Speichert alle verfügbaren Wochen für die Von/Bis-KW Dropdowns
+
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];  
 
@@ -479,13 +492,28 @@ async function api(method, url, body = null, expectedResponseContentType = 'appl
 
 // ── Daten laden ────────────────────────────────────────────────────────────────
 async function loadPlanning() {
-    const useCurrent = document.getElementById('use-current-week').checked;
-    const useEndWeek = document.getElementById('use-end-week').checked;
-    const endWeekVal = (useEndWeek && document.getElementById('end-week-select').value)
-                       ? document.getElementById('end-week-select').value : '';  
+    const useCurrentWeekCheckbox = document.getElementById('use-current-week');
+    const startWeekSelect = document.getElementById('start-week-select');
+    const endWeekSelect = document.getElementById('end-week-select');
 
-    let url = `/api/planning/?use_current_week=${useCurrent}`;
-    if (endWeekVal) url += `&end_week=${encodeURIComponent(endWeekVal)}`;  
+    const useCurrent = useCurrentWeekCheckbox.checked;
+    let url = `/api/planning/?use_current_week=${useCurrent}`; // Initial API call
+
+    let selectedStartWeek = startWeekSelect.value;
+    let selectedEndWeek = endWeekSelect.value;
+
+    // Backend Integration for "Von KW" - HINWEIS:
+    // Der aktuelle Backend `/api/planning` Endpunkt unterstützt nur `use_current_week` (boolean)
+    // und `end_week` (string). Er unterstützt KEINEN `start_week` string Parameter direkt.
+    // Wenn 'use_current_week' false ist, verwendet das Backend implizit das früheste Projektstartdatum.
+    // Um eine beliebige "Von KW" Auswahl korrekt zu unterstützen, müsste die Backend-Funktion `get_planning`
+    // erweitert werden, um einen `Optional[str]` Parameter für `start_week` zu akzeptieren und zu verarbeiten.
+    // Ohne diese Backend-Änderung simulieren wir die 'von KW' Filterung client-seitig,
+    // was bei sehr großen Datensätzen zu Performance-Problemen führen kann.
+
+    if (selectedEndWeek) {
+        url += `&end_week=${encodeURIComponent(selectedEndWeek)}`;
+    }
 
     try {
         planningData = await api('GET', url);
@@ -493,55 +521,110 @@ async function loadPlanning() {
         toast('Fehler beim Laden: ' + e.message, 'error');
         console.error(e);
         return;
-    }  
+    }
 
-    await ensureEndWeekDropdown(endWeekVal);  
+    // Populate the week dropdowns before potentially filtering planningData.weeks
+    await ensureWeekDropdownsPopulated();
+    // Then set the selected values and enable/disable as per logic
+    toggleTimeRangeFilters(); // Update UI state for dropdowns based on checkbox
+
+    // Apply client-side filter if "Von KW" is selected and not using current week
+    if (!useCurrent && selectedStartWeek && planningData.weeks) {
+        const startIndex = planningData.weeks.indexOf(selectedStartWeek);
+        if (startIndex !== -1) {
+            planningData.weeks = planningData.weeks.slice(startIndex);
+            
+            // Filter all data structures based on the new `planningData.weeks`
+            const filterByWeekKey = (obj, weekKeysToKeep) => {
+                const newObj = {};
+                for (const wk in obj) {
+                    if (weekKeysToKeep.includes(wk)) {
+                        newObj[wk] = obj[wk];
+                    }
+                }
+                return newObj;
+            };
+
+            planningData.capacity_totals = filterByWeekKey(planningData.capacity_totals, planningData.weeks);
+            
+            for (const staffName in planningData.capacity_by_staff) {
+                planningData.capacity_by_staff[staffName].week_hours = filterByWeekKey(
+                    planningData.capacity_by_staff[staffName].week_hours, planningData.weeks
+                );
+            }
+            for (const staffName in planningData.plannings) {
+                 planningData.plannings[staffName] = filterByWeekKey(
+                    planningData.plannings[staffName], planningData.weeks
+                );
+            }
+            for (const staffName in planningData.absence_map) {
+                planningData.absence_map[staffName] = filterByWeekKey(
+                    planningData.absence_map[staffName], planningData.weeks
+                );
+            }
+        }
+    }
 
     try { renderMatrix(); }
     catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); return; }  
 
-    renderDragSources(); // Leert die D&D Bereiche
+    renderDragSources(); // Empties D&D sections
     loadProjectStatus(); 
-}  
+}
 
-let _allWeeks = null;
-async function ensureEndWeekDropdown(selectedVal) {
-    if (!_allWeeks || _allWeeks.length === 0) {
-        const useCurrent = document.getElementById('use-current-week').checked;
-        try {
-            const base = await api('GET', `/api/planning/?use_current_week=${useCurrent}`);
-            _allWeeks = base.weeks || [];
-        } catch(e) {
-            _allWeeks = planningData.weeks || [];
-        }
+function toggleTimeRangeFilters() {
+    const useCurrentWeekCheckbox = document.getElementById('use-current-week');
+    const startWeekSelect = document.getElementById('start-week-select');
+
+    startWeekSelect.disabled = useCurrentWeekCheckbox.checked;
+    // The end-week-select is now always enabled, no need for its checkbox
+}
+
+async function ensureWeekDropdownsPopulated() {
+    if (!_allAvailableWeeksForDropdown) {
+        // Fetch a broad range of weeks for the dropdowns, ignoring 'use-current-week' for this API call
+        // Fetching 52 weeks + 12 weeks buffer = 64 weeks total for dropdown range
+        const base = await api('GET', `/api/planning/?use_current_week=false&end_week=${_nextWeekKey(new Date(), 64)}`);
+        _allAvailableWeeksForDropdown = base.weeks || [];
     }
-    populateEndWeekDropdown(_allWeeks, selectedVal);
-}  
 
-function toggleEndWeek() {
-    const cb  = document.getElementById('use-end-week');
-    const sel = document.getElementById('end-week-select');
-    sel.disabled = !cb.checked;
-    if (!cb.checked) {
-        sel.value = '';
-        _allWeeks = null;
-    }
-    loadPlanning();
-}  
+    // NOTE: 'value' and 'label' for default option
+    populateWeekDropdown('start-week-select', _allAvailableWeeksForDropdown, document.getElementById('start-week-select').value, '– auto –');
+    populateWeekDropdown('end-week-select', _allAvailableWeeksForDropdown, document.getElementById('end-week-select').value, '– kein –');
+}
 
-function populateEndWeekDropdown(weeks, currentVal) {
-    const sel = document.getElementById('end-week-select');
-    const prev = currentVal || sel.value || '';
-    sel.innerHTML = '<option value="">– wählen –</option>';
+// Generic function to populate a week dropdown
+function populateWeekDropdown(selectId, weeks, currentVal, defaultLabel) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${defaultLabel}</option>`;
     (weeks || []).forEach(wk => {
         const kwNum = parseInt(wk.split('-W')[1]);
         const opt   = document.createElement('option');
         opt.value       = wk;
-        opt.textContent = `KW ${kwNum}`;
-        if (wk === prev) opt.selected = true;
+        opt.textContent = `KW ${kwNum} (${wk.split('-W')[0]})`; // Show year for clarity
+        if (wk === currentVal) opt.selected = true;
         sel.appendChild(opt);
     });
-}  
+}
+// Helper for ensureWeekDropdownsPopulated to get a date for next week for the API call
+function _nextWeekKey(baseDate, weeksToAdd) {
+    const nextWeekDate = new Date(baseDate.getTime());
+    nextWeekDate.setDate(baseDate.getDate() + (7 * weeksToAdd));
+    const nxt_iso = getIsoWeek(nextWeekDate);
+    return `${nxt_iso.year}-W${String(nxt_iso.week).padStart(2,'0')}`;
+}
+
+
+// Listener for the "ab aktueller KW" checkbox and "Von KW" / "Bis KW" selects
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('use-current-week').addEventListener('change', () => {
+        toggleTimeRangeFilters();
+        loadPlanning();
+    });
+    // Already have onchange="loadPlanning()" on the select elements directly in HTML.
+});
+
 
 // ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
 function weekMonday(weekKey) {
@@ -716,7 +799,7 @@ function renderMatrix() {
                 const pid       = pl.project_id != null ? pl.project_id : 'null';
                 const tid       = pl.task_id    != null ? pl.task_id    : 'null';
                 const outdated  = pl.is_outdated ? ' outdated' : '';
-                const oTitle    = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
+                const oTitle    = pl.is_is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
                 return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
                             title="${label}${oTitle}">
                     <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
@@ -757,6 +840,8 @@ function renderMatrix() {
 
 // ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
 function renderDragSources() {
+    // Die Drag & Drop Sektionen wurden entfernt. Diese Funktion wird nicht mehr benötigt.
+    // Falls die Elemente dennoch existieren, leere sie.
     const projList = document.getElementById('proj-drag-list');
     if (projList) projList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
     const taskList = document.getElementById('task-drag-list');
@@ -814,13 +899,17 @@ function cellClick(e, staff, roleId, weekKey) {
     // Event Listener für Type-ahead aktivieren
     document.addEventListener('keydown', handleDropdownKeydown);
     _dropdownSearchTerm = ''; // Suchterm zurücksetzen
-    _activeDropdownItemIndex = -1; // Aktives Element zurücksetzen
+    _activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1; // Erstes Element aktivieren, falls vorhanden
+    highlightActiveDropdownItem(); // Hervorhebung nach dem Rendern anwenden
 }  
 
 // Rendert die Items im Dropdown
 function renderDropdownItems(itemsToRender) {
     const dd = document.getElementById('cell-dropdown');
     if (!dd) return; // Sicherstellen, dass das Element existiert
+
+    // Entferne alte aktive Markierungen, bevor neue gerendert werden
+    dd.querySelectorAll('.cell-dropdown-item.active').forEach(item => item.classList.remove('active'));
 
     dd.innerHTML = itemsToRender.map((it, index) =>
         `<div class="cell-dropdown-item ${index === _activeDropdownItemIndex ? 'active' : ''}"
@@ -852,7 +941,11 @@ function handleDropdownKeydown(e) {
     } else if (e.key === 'Enter') {
         e.preventDefault();
         if (_activeDropdownItemIndex > -1 && _activeDropdownItemIndex < _filteredDropdownItems.length) {
-            dropdownItems[_activeDropdownItemIndex].click(); // Simuliere Klick auf das aktive Element
+            // Finde das DOM-Element des aktuell aktiven Items und simuliere einen Klick
+            const activeItemElement = document.querySelector(`#cell-dropdown .cell-dropdown-item[data-index="${_activeDropdownItemIndex}"]`);
+            if (activeItemElement) {
+                activeItemElement.click(); 
+            }
         }
     } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -891,11 +984,12 @@ function highlightActiveDropdownItem() {
     dd.querySelectorAll('.cell-dropdown-item').forEach(item => item.classList.remove('active'));
 
     if (_activeDropdownItemIndex > -1 && _activeDropdownItemIndex < _filteredDropdownItems.length) {
+        // Finden des Elements anhand des data-index Attributs, das im renderDropdownItems gesetzt wird
         const activeItemElement = dd.querySelector(`.cell-dropdown-item[data-index="${_activeDropdownItemIndex}"]`);
         if (activeItemElement) {
             activeItemElement.classList.add('active');
             // Scrollen, falls nötig
-            activeItemElement.scrollIntoView({ block: 'nearest' });
+            activeItemElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); // Smooth Scrolling
         }
     }
 }
@@ -939,10 +1033,20 @@ async function doAssign(staff, roleId, weekKey, payload) {
     };
     try {
         await api('POST', '/api/planning/assign', body);
-        toast(`Zugewiesen: ${payload.name}`);
         
-        // Nach Zuweisung den Projektstatus neu laden und prüfen
-        await loadProjectStatus(payload.type === 'project' ? payload.id : null); // Projekt-ID übergeben
+        let message = `Zugewiesen: ${payload.name}`;
+        if (payload.type === 'project' && payload.id) {
+            // Lade den Status *aller* Projekte neu und nutze die zurückgegebene Liste
+            const updatedProjectStatuses = await loadProjectStatus(payload.id); // Aktualisiert _allProjectStatusRows und filtert/rendert
+            const assignedProjectData = updatedProjectStatuses.find(p => p.project_id === payload.id);
+            if (assignedProjectData) {
+                message += `, offen Impl ${Math.round(assignedProjectData.remaining_impl)}h, offen Test ${Math.round(assignedProjectData.remaining_test)}h`;
+            }
+            toast(message);
+        } else {
+            toast(message);
+            await loadProjectStatus(); // Aktualisiert _allProjectStatusRows und filtert/rendert
+        }
         loadPlanning(); // Matrix neu laden
 
     } catch(e) {
@@ -994,6 +1098,7 @@ async function loadProjectStatus(assignedProjectId = null) {
     const rows = await api('GET', '/api/planning/project_status');  
     _allProjectStatusRows = rows; // Alle Zeilen speichern
     filterProjectStatus(assignedProjectId); // Initial filtern und ggf. Meldung anzeigen
+    return rows; // NEU: Gib die geladenen Zeilen zurück
 }
 
 function filterProjectStatus(assignedProjectId = null) {
