@@ -2,23 +2,209 @@
 
 {% block title %}Planungsstatus – Kapaverwaltung{% endblock %}
 
-{% block page_navbar %}{% endblock %} {# <-- Dieser Block überschreibt den Navigationsbereich und lässt ihn leer #}
+{% block page_navbar %}{% endblock %} {# <-- Dieser Block wird leer überschrieben, um die Navbar auszublenden #}
 
 {% block content %}
 <style>
-/* ... (bestehende Styles in planning_status.html) ... */
-
+/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
 /* Der Wert für 'top' im #planning-header-wrap ist hier die entscheidende Anpassung */
 #planning-header-wrap {
     position: sticky;
-    top: 0px; /* Dieser Wert sollte auf 0 gesetzt werden, da keine Navbar mehr gerendert wird */
+    top: 0px; /* Dieser Wert sollte auf 0 gesetzt werden, da keine Navbar mehr darüber ist */
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
     overflow-x: hidden;
 }
+#planning-body-wrap {
+    overflow-x: auto;
+    margin-bottom: 24px;
+}
+.planning-header-table,
+.planning-body-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    table-layout: auto;
+    min-width: max-content;
+}
+.planning-header-table tr.month-row th {
+    background: var(--bg2);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    height: 24px;
+    line-height: 24px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+    box-sizing: border-box;
+}
+.planning-header-table tr.month-row th.staff-col {
+    text-align: left;
+    border-bottom: none;
+}
+.planning-header-table tr.kw-row th {
+    background: var(--bg3);
+    font-size: 10px;
+    font-weight: 500;
+    height: 28px;
+    line-height: 28px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    min-width: 90px;
+    box-sizing: border-box;
+}
+.planning-header-table tr.kw-row th.staff-col {
+    min-width: 150px;
+    text-align: left;
+}
+.kw-header-current {
+    color: var(--accent) !important;
+    border-bottom: 2px solid var(--accent) !important;
+}
+.planning-body-table td.staff-name {
+    position: sticky;
+    left: 0;
+    background: var(--bg2);
+    z-index: 5;
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    padding: 5px 10px;
+    font-weight: 500;
+    min-width: 150px;
+    box-sizing: border-box;
+}
+.planning-body-table td {
+    padding: 3px 4px;
+    border: 1px solid rgba(42,48,80,0.3);
+    min-width: 90px;
+    height: 36px;
+    vertical-align: middle;
+    text-align: center;
+    cursor: default;
+    position: relative;
+    box-sizing: border-box;
+}
+.planning-body-table td.droptarget {
+    cursor: default;
+}
+.planning-body-table td.droptarget:hover {
+    outline: none;
+}
 
-/* ... (Restliche Styles und HTML von planning_status.html) ... */
+.absent-cell {
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(42,48,80,0.55), rgba(42,48,80,0.55) 4px,
+        rgba(30,35,54,0.55) 4px, rgba(30,35,54,0.55) 8px
+    ) !important;
+    cursor: not-allowed !important;
+    color: var(--text2);
+    font-size: 10px;
+}
+.past-cell {
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(30,35,54,0.7), rgba(30,35,54,0.7) 4px,
+        rgba(20,24,40,0.7) 4px, rgba(20,24,40,0.7) 8px
+    ) !important;
+    cursor: not-allowed !important;
+    color: var(--text2);
+    font-size: 10px;
+    opacity: 0.6;
+}
+.partial-absent-cell {
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(42,48,80,0.2), rgba(42,48,80,0.2) 4px,
+        transparent 4px, transparent 8px
+    );
+}
+.planning-cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 82px;
+    height: 26px;
+    user-select: none;
+    position: relative;
+    vertical-align: middle;
+}
+.planning-cell.outdated {
+    opacity: 0.45;
+    text-decoration: line-through;
+    filter: grayscale(60%);
+}
+.cap-row td {
+    background: var(--bg3);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text2);
+    text-align: center;
+    font-weight: 600;
+    border-top: 2px solid var(--border);
+}
+
+.cell-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 50;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    min-width: 180px;
+    max-height: 220px;
+    overflow-y: auto;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+    padding: 5px 0;
+}
+.cell-dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    cursor: default;
+    font-size: 12px;
+    border-bottom: 1px solid rgba(42,48,80,0.3);
+}
+.cell-dropdown-item:last-child { border-bottom: none; }
+.cell-dropdown-item.active, .cell-dropdown-item:hover {
+    background: var(--bg3);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+}
+.forecast-modal .modal {
+    max-width: 90vw;
+    width: fit-content;
+    min-width: 650px;
+    padding: 20px;
+    background: var(--bg);
+}
+.forecast-chart-container svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+.modal-backdrop.forecast-modal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.card-header {
+    padding-bottom: 8px;
+}
 </style>
 
 <!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
