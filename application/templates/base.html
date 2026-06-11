@@ -331,7 +331,7 @@
 </style>
 </head>
 <body>
-
+{% raw %}{% block page_navbar %}
 <nav>
   <span class="logo">
    <img src="{{ url_for('static', path='logo.png') }}" alt="KapaBase"> &nbsp; KapaBase
@@ -342,6 +342,7 @@
   <a href="/tasks"    id="nav-tasks">Tasks</a>
   <a href="/planning" id="nav-planning">Planung</a>
 </nav>
+{% endblock %}{% endraw %}
 
 <div class="page">
   {% block content %}{% endblock %}
