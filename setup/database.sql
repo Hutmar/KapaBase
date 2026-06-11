@@ -12,7 +12,7 @@ CREATE TYPE roleType AS ENUM ('Developer', 'Tester', 'Other');
 
 CREATE TABLE roles (
 	role_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	shortname varchar(100) not null REFERENCES staff(shortname),
+	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
 	role roleType not null
 );
 
@@ -20,7 +20,7 @@ CREATE TYPE absenceType AS ENUM ('Urlaub', 'Krank', 'GLAZ', 'Other');
 
 CREATE TABLE absence (
 	absence_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	shortname varchar(100) not null REFERENCES staff(shortname),
+	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
 	absence_from date not null,
 	absence_to date not null,
 	absence_type absenceType not null
@@ -67,7 +67,7 @@ create table worked_hours (
 create table planning(
 	task_id int default null REFERENCES tasks(task_id),
 	project_id int default null REFERENCES project(project_id),
-	staff varchar(100) not null REFERENCES staff(shortname),
+	staff varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
 	role_id int not null REFERENCES roles(role_id),
 	start_date date not null,
 	end_date date not null
