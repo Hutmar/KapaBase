@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from typing import Optional
 
 # ── Sub-Router importieren ─────────────────────────────────────────────────────
 from routers import staff, projects, tasks, planning, absence, charts, worked_hours, forecast
@@ -61,6 +62,29 @@ async def page_worked_hours(request: Request, project_id: int):
     return templates.TemplateResponse("worked_hours.html",
                                       {"request": request, "project_id": project_id})
 
+@app.get("/planning_status", response_class=HTMLResponse)
+async def page_planning_status(
+    request: Request,
+    project_id: Optional[int] = None,
+    project_name: Optional[str] = None,
+    task_id: Optional[int] = None,
+    task_name: Optional[str] = None,
+):
+    """
+    Zeigt eine gefilterte, schreibgeschützte Ansicht der Ressourcenplanung.
+    Filterung erfolgt über URL-Parameter.
+    """
+    return templates.TemplateResponse(
+        "planning_status.html",
+        {
+            "request": request,
+            "project_id": project_id,
+            "project_name": project_name,
+            "task_id": task_id,
+            "task_name": task_name,
+        }
+    )
+    
 # ── Startpunkt ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

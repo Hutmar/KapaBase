@@ -70,5 +70,11 @@ create table planning(
 	staff varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
 	role_id int not null REFERENCES roles(role_id),
 	start_date date not null,
-	end_date date not null
+	end_date date not null,
+	CONSTRAINT chk_task_xor_project CHECK (
+        (task_id IS NULL) != (project_id IS NULL)
+    ),
+    CONSTRAINT uq_planning UNIQUE NULLS NOT DISTINCT (
+        task_id, project_id, staff, role_id, start_date, end_date
+    )
 );
