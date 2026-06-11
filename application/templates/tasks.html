@@ -5,7 +5,9 @@
 <div class="card">
   <div class="card-header">
     <h1>Task-Verwaltung</h1>
-    <button class="btn btn-primary" onclick="openModal()">+ Neuer Task</button>
+    {% if has_edit_rights %}
+	<button class="btn btn-primary" onclick="openModal()">+ Neuer Task</button>
+	{% endif %}
   </div>
 
   <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
@@ -64,6 +66,7 @@
 <script>
 let editingId = null;
 let allTasks = [];
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
 document.getElementById('f-color')?.addEventListener('input', function() {
   document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
@@ -105,8 +108,10 @@ async function loadTasks() {
       </td>
       <td>
         <div class="flex-gap">
+		${hasEditRights ? `
           <button class="btn btn-ghost btn-xs" onclick="openModal(${t.task_id})">✎</button>
           <button class="btn btn-danger btn-xs" onclick="deleteTask(${t.task_id})">✕</button>
+		  ` : '<span class="text-dim" style="font-size:12px"></span>'}
         </div>
       </td>
     </tr>

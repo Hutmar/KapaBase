@@ -407,6 +407,7 @@ Anzahl Projekte:
 {% block scripts %}
 <script>
 // ── State ──────────────────────────────────────────────────────────────────────
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 let planningData = null;
 let dragPayload  = null;   // {type, id, name, color} - Drag & Drop entfernt, aber Payload-Struktur beibehalten für Klick-Zuweisung
 let assignTarget = null;   // für Modal-Rollenauswahl
@@ -779,6 +780,7 @@ function cellDragOver(e) { /* D&D entfernt */ }
 function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }  
 // ── Klick-Zuweisung ───────────────────────────────────────────────────────────
 function cellClick(e, staff, roleId, weekKey) {
+if (!hasEditRights) return;
 if (e.target.classList.contains('remove-btn')) return;
 e.stopPropagation();  
 const dd = document.getElementById('cell-dropdown');  
@@ -951,6 +953,7 @@ toast(e.message, 'error');
 }
 }  
 async function removePlanning(e, staff, weekKey, projectId, taskId) {
+if (!hasEditRights) return;
 e.stopPropagation();
 try {
 await api('DELETE', '/api/planning/remove', {

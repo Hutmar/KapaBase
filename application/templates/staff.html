@@ -59,7 +59,9 @@
 <div class="card">
     <div class="card-header">
         <h1>Mitarbeiterverwaltung</h1>
-        <button class="btn btn-primary" onclick="openModal()">+ Neuer Mitarbeiter</button>
+        {% if has_edit_rights %}
+		<button class="btn btn-primary" onclick="openModal()">+ Neuer Mitarbeiter</button>
+		{% endif %}
     </div>
 
     <!-- Neue Kästen für die Teamstunden -->
@@ -144,6 +146,8 @@
 {% block scripts %}
 <script>
     let editingName = null;
+	
+	const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
     async function loadStaff() {
         // Die API liefert nun ein Objekt mit 'staff_members', 'total_hours_per_day' und 'total_hours_per_week'
@@ -161,8 +165,11 @@
                 <td>${(s.roles||[]).map(r=>roleTag(r)).join(' ')}</td>
                 <td>
                     <div class="flex-gap">
+					${hasEditRights ? `
                         <button class="btn btn-ghost btn-xs" onclick="openModal('${s.shortname}')">✎</button>
                         <button class="btn btn-danger btn-xs" onclick="deleteStaff('${s.shortname}')">✕</button>
+					` : '<span class="text-dim" style="font-size:12px"></span>'}
+                    </div>
                     </div>
                 </td>
             </tr>
