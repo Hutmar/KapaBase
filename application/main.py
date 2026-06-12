@@ -14,7 +14,8 @@ from typing import Optional
 
 # ── Sub-Router importieren ─────────────────────────────────────────────────────
 from routers import staff, projects, tasks, planning, absence, charts, worked_hours, forecast
-from acl import has_permission  # ── Flexibles ACL Modul importieren ────────────────
+from routers import sync as sync_router
+from acl import has_permission
 
 # ── App-Instanz ────────────────────────────────────────────────────────────────
 app = FastAPI(title="Kapazitätsverwaltung", version="1.0.0")
@@ -32,6 +33,7 @@ app.include_router(absence.router,      prefix="/api/absence",      tags=["Absen
 app.include_router(charts.router,       prefix="/api/charts",       tags=["Charts"])
 app.include_router(worked_hours.router, prefix="/api/worked_hours", tags=["Worked Hours"])
 app.include_router(forecast.router,     prefix="/api/forecast",     tags=["Forecast"])
+app.include_router(sync_router.router,  prefix="/api/sync",         tags=["Sync"])
 
 # ── Frontend HTML Seiten ───────────────────────────────────────────────────────
 
@@ -41,7 +43,6 @@ async def page_index(request: Request):
 
 @app.get("/staff", response_class=HTMLResponse)
 async def page_staff(request: Request):
-    # Prüft das Recht 'edit' im Bereich 'staff'
     editable = has_permission(request, "staff", "edit")
     return templates.TemplateResponse("staff.html", {"request": request, "has_edit_rights": editable})
 
@@ -57,7 +58,6 @@ async def page_projects(request: Request):
 
 @app.get("/tasks", response_class=HTMLResponse)
 async def page_tasks(request: Request):
-    # Prüft das Recht 'edit' im Bereich 'tasks'
     editable = has_permission(request, "tasks", "edit")
     return templates.TemplateResponse("tasks.html", {"request": request, "has_edit_rights": editable})
 
@@ -70,7 +70,7 @@ async def page_planning(request: Request):
 async def page_worked_hours(request: Request, project_id: int):
     editable = has_permission(request, "worked_hours", "edit")
     return templates.TemplateResponse("worked_hours.html", {
-        "request": request, 
+        "request": request,
         "project_id": project_id,
         "has_edit_rights": editable
     })
@@ -83,19 +83,16 @@ async def page_planning_status(
     task_ids:      Optional[str] = None,
     task_names:    Optional[str] = None,
 ):
-    """
-    Zeigt eine gefilterte, schreibgeschützte Ansicht der Ressourcenplanung.
-    """
     editable = has_permission(request, "planning_status", "edit")
     return templates.TemplateResponse(
         "planning_status.html",
         {
             "request": request,
-            "filter_project_ids": project_ids,
+            "filter_project_ids":   project_ids,
             "filter_project_names": project_names,
-            "filter_task_ids": task_ids,
-            "filter_task_names": task_names,
-            "has_edit_rights": editable
+            "filter_task_ids":      task_ids,
+            "filter_task_names":    task_names,
+            "has_edit_rights":      editable,
         }
     )
 

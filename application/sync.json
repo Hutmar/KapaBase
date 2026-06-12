@@ -1,0 +1,39 @@
+{
+  "version": "1.0",
+  "sync_sources": {
+    "projects": [
+      {
+        "id": "jira_projects",
+        "type": "jira",
+        "enabled": true,
+        "description": "Synchronisierung von Projekten mit Jira",
+        "jira": {
+          "base_url": "JIRA_URL",
+          "api_key": "",
+          "email": "EMAIL",
+          "projects": ["KapaBase"],
+          "import_query": "project in (KapaBase) AND issuetype = Epic AND status != Done ORDER BY created DESC",
+          "field_mapping": {
+            "summary":          "project_name",
+            "description":      "remarks",
+            "duedate":          "due_date",
+            "customfield_10015": "start_date",
+            "Customer": 		"customer",
+            "status":           "_jira_status"
+          },
+          "status_mapping": {
+            "To Do":       { "planned": true,  "done": false },
+            "In Progress": { "planned": true,  "done": false },
+            "Done":        { "planned": false, "done": true  },
+            "Cancelled":   { "planned": false, "done": false }
+          },
+          "defaults": {
+            "project_type": "Project",
+            "planned":      true,
+            "done":         false
+          }
+        }
+      }
+    ]
+  }
+}

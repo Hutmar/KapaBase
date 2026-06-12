@@ -5,22 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         body {
-            background-color: white; /* Ensure the iframe has a white background */
+            background-color: white;
         }
     </style>
 </head>
 <body>
     {% extends "base.html" %}
-{% block title %}Projekte – Kapaverwaltung{% endblock %}  
+{% block title %}Projekte – Kapaverwaltung{% endblock %}
 
 {% block content %}
 <div class="card">
 <div class="card-header">
 <h1>Projektverwaltung</h1>
-{% if has_edit_rights %}
-<button class="btn btn-primary" onclick="openModal()">+ Neues Projekt</button>
-{% endif %}
-</div>  
+<div class="flex-gap">
+  {% if has_edit_rights %}
+  <button class="btn btn-ghost" onclick="startJiraSync()" id="btn-jira-sync" title="Mit Jira synchronisieren">
+    <!-- Jira-Icon (SVG) -->
+    <svg width="16" height="16" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
+      <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
+      <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
+      <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
+    </svg>
+    Jira-Sync
+  </button>
+  <button class="btn btn-primary" onclick="openModal()">+ Neues Projekt</button>
+  {% endif %}
+</div>
+</div>
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
 <input id="search" placeholder="🔍 Suche (Name, Kunde, Jira)" style="max-width:240px"
@@ -37,9 +48,9 @@ Auch erledigte
 <input type="checkbox" id="show-details" checked style="width:auto" onchange="saveFilterState(); toggleDetails()">
 Details anzeigen
 </label>
-</div>  
+</div>
 
-<div id="cap-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>  
+<div id="cap-summary" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px"></div>
 
 <div style="overflow-x:auto">
 <table id="proj-table">
@@ -47,7 +58,8 @@ Details anzeigen
 <tr>
 <th>⇅</th>
 <th onclick="setAndSort('project_name')">Name ⇅</th>
-<th onclick="setAndSort('project_type')">Typ ⇅</th> <th onclick="setAndSort('customer')">Kunde ⇅</th>
+<th onclick="setAndSort('project_type')">Typ ⇅</th>
+<th onclick="setAndSort('customer')">Kunde ⇅</th>
 <th class="detail-col">Jira</th>
 <th onclick="setAndSort('target_hours')">Soll-h ⇅</th>
 <th class="detail-col">Impl-h</th>
@@ -66,7 +78,7 @@ Details anzeigen
 <tfoot id="proj-foot"></tfoot>
 </table>
 </div>
-</div>  
+</div>
 
 <div class="card">
 <h2>Auslastungsübersicht</h2>
@@ -76,19 +88,21 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <img id="chart-cap" src="/api/charts/capacity_per_week" alt="Kapazität/KW"
 style="max-width:100%;border-radius:4px;background:#fff">
 </div>
-</div>  
+</div>
 
+<!-- ── Projekt-Modal ──────────────────────────────────────────────────────── -->
 <div class="modal-backdrop" id="modal-backdrop">
 <div class="modal" style="width:min(600px,95vw)">
 <div class="modal-title" id="modal-title">Neues Projekt</div>
-<div id="modal-alert"></div>  
+<div id="modal-alert"></div>
 
 <div class="form-row">
 <label>Name *</label>
 <input id="f-name">
 </div>
 <div class="form-row">
-<label>Projekt-Typ *</label> <select id="f-type" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
+<label>Projekt-Typ *</label>
+<select id="f-type" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
     <option value="Project">Project</option>
     <option value="Operations">Operations</option>
     <option value="Internal">Internal</option>
@@ -114,7 +128,7 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <label>Test-Stunden *</label>
 <input id="f-test" type="number" min="0" oninput="validateHours()">
 </div>
-<div id="hours-warning" class="alert alert-error hidden">Impl + Test ≠ Soll-Stunden</div>  
+<div id="hours-warning" class="alert alert-error hidden">Impl + Test ≠ Soll-Stunden</div>
 
 <div class="form-row">
 <label>Geplant</label>
@@ -144,7 +158,7 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <div class="form-row">
 <label>Bemerkung</label>
 <textarea id="f-remarks" rows="2"></textarea>
-</div>  
+</div>
 
 <div class="modal-footer">
 <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
@@ -152,329 +166,651 @@ style="max-width:100%;border-radius:4px;background:#fff">
 </div>
 </div>
 </div>
-{% endblock %}  
+
+<!-- ── Jira-Sync-Modal ────────────────────────────────────────────────────── -->
+<div class="modal-backdrop" id="sync-modal-backdrop">
+<div class="modal" style="width:min(860px,97vw);max-height:88vh">
+
+  <div class="modal-title" style="display:flex;align-items:center;gap:10px">
+    <svg width="18" height="18" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
+      <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
+      <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
+    </svg>
+    Jira-Synchronisierung
+  </div>
+
+  <!-- Lade-Indikator -->
+  <div id="sync-loading" style="text-align:center;padding:40px 0;display:none">
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px">Daten werden von Jira abgerufen …</div>
+    <div class="sync-spinner"></div>
+  </div>
+
+  <!-- Fehler -->
+  <div id="sync-error" class="alert alert-error hidden"></div>
+
+  <!-- Vorschau -->
+  <div id="sync-preview" style="display:none">
+    <!-- Zusammenfassung -->
+    <div id="sync-summary" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
+      <button class="sync-tab active" data-tab="updates" onclick="switchSyncTab('updates')">Aktualisierungen</button>
+      <button class="sync-tab" data-tab="creates" onclick="switchSyncTab('creates')">Neue Projekte</button>
+    </div>
+
+    <!-- Tab: Updates -->
+    <div id="sync-tab-updates">
+      <div id="sync-updates-empty" class="text-dim" style="font-size:13px;display:none">
+        Keine Aktualisierungen – alle verknüpften Projekte sind aktuell.
+      </div>
+      <div id="sync-updates-list"></div>
+    </div>
+
+    <!-- Tab: Creates -->
+    <div id="sync-tab-creates" style="display:none">
+      <div id="sync-creates-empty" class="text-dim" style="font-size:13px;display:none">
+        Keine neuen Projekte gefunden.
+      </div>
+      <div id="sync-creates-list"></div>
+    </div>
+  </div>
+
+  <div class="modal-footer" id="sync-footer" style="display:none">
+    <div style="font-size:12px;color:var(--text2);flex:1">
+      <span id="sync-selection-info"></span>
+    </div>
+    <button class="btn btn-ghost" onclick="closeSyncModal()">Abbrechen</button>
+    <button class="btn btn-primary" onclick="applySync()" id="btn-sync-apply">Übernehmen</button>
+  </div>
+</div>
+</div>
+
+<style>
+/* ── Sync-Dialog Styles ───────────────────────────────────────────────────── */
+.sync-spinner {
+  width: 32px; height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  margin: 0 auto;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sync-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text2);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 16px 8px;
+  margin-bottom: -1px;
+  transition: all 0.15s;
+}
+.sync-tab:hover { color: var(--text); }
+.sync-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.sync-diff-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.sync-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.sync-diff-header:hover { background: rgba(74,144,217,0.06); }
+.sync-diff-body {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+}
+.sync-diff-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.sync-diff-table th {
+  font-size: 10px;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 4px 8px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+.sync-diff-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid rgba(42,48,80,0.3);
+  vertical-align: top;
+}
+.sync-diff-table tr:last-child td { border-bottom: none; }
+.val-old { color: var(--danger); text-decoration: line-through; font-family: var(--font-mono); }
+.val-new  { color: var(--accent2); font-family: var(--font-mono); }
+.val-new-create { color: var(--text); font-family: var(--font-mono); }
+
+.sync-checkbox {
+  width: 16px !important;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+</style>
+
+{% endblock %}
 
 {% block scripts %}
 <script>
 let editingId = null;
 let sortField = localStorage.getItem('project_sort_field') || 'sort_order';
-let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1'); 
-let allProjects = [];  
+let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1');
+let allProjects = [];
 
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
+// Jira-Sync: Quellen-ID (muss zur sync.json passen)
+const SYNC_ROUTER  = 'projects';
+const SYNC_SOURCE  = 'jira_projects';
+
+// Aktuell geladene Preview-Daten
+let currentSyncPreview = null;
+
 document.getElementById('f-color')?.addEventListener('input', function() {
-document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
-});  
+  document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
+});
 
 function validateHours() {
-const t = parseInt(document.getElementById('f-target').value||0);
-const i = parseInt(document.getElementById('f-impl').value||0);
-const x = parseInt(document.getElementById('f-test').value||0);
-document.getElementById('hours-warning').classList.toggle('hidden', t===0 || i+x===t);
-}  
+  const t = parseInt(document.getElementById('f-target').value||0);
+  const i = parseInt(document.getElementById('f-impl').value||0);
+  const x = parseInt(document.getElementById('f-test').value||0);
+  document.getElementById('hours-warning').classList.toggle('hidden', t===0 || i+x===t);
+}
 
 function toggleDetails() {
-const show = document.getElementById('show-details').checked;
-document.querySelectorAll('.detail-col').forEach(el => {
-el.style.display = show ? '' : 'none';
-});
-}  
+  const show = document.getElementById('show-details').checked;
+  document.querySelectorAll('.detail-col').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
 
 function updateWeekNumber(dateInputId, weekNumberSpanId) {
-const dateInput = document.getElementById(dateInputId);
-const weekNumberSpan = document.getElementById(weekNumberSpanId);
-if (dateInput && weekNumberSpan) {
-weekNumberSpan.textContent = getWeekNumber(dateInput.value);
-}
+  const dateInput = document.getElementById(dateInputId);
+  const weekNumberSpan = document.getElementById(weekNumberSpanId);
+  if (dateInput && weekNumberSpan) {
+    weekNumberSpan.textContent = getWeekNumber(dateInput.value);
+  }
 }
 
 function saveFilterState() {
-localStorage.setItem('project_search_term', document.getElementById('search').value.trim());
-localStorage.setItem('project_filter_planned', document.getElementById('f-planned').checked);
-localStorage.setItem('project_filter_done', document.getElementById('f-done').checked);
-localStorage.setItem('project_show_details', document.getElementById('show-details').checked);
+  localStorage.setItem('project_search_term', document.getElementById('search').value.trim());
+  localStorage.setItem('project_filter_planned', document.getElementById('f-planned').checked);
+  localStorage.setItem('project_filter_done', document.getElementById('f-done').checked);
+  localStorage.setItem('project_show_details', document.getElementById('show-details').checked);
 }
 
 function loadFilterState() {
-const searchTerm = localStorage.getItem('project_search_term');
-const filterPlanned = localStorage.getItem('project_filter_planned');
-const filterDone = localStorage.getItem('project_filter_done');
-const showDetails = localStorage.getItem('project_show_details');
-
-if (searchTerm !== null) {
-document.getElementById('search').value = searchTerm;
-}
-if (filterPlanned !== null) {
-document.getElementById('f-planned').checked = (filterPlanned === 'true');
-}
-if (filterDone !== null) {
-document.getElementById('f-done').checked = (filterDone === 'true');
-}
-if (showDetails !== null) {
-document.getElementById('show-details').checked = (showDetails === 'true');
-}
+  const searchTerm  = localStorage.getItem('project_search_term');
+  const filterPlanned = localStorage.getItem('project_filter_planned');
+  const filterDone  = localStorage.getItem('project_filter_done');
+  const showDetails = localStorage.getItem('project_show_details');
+  if (searchTerm  !== null) document.getElementById('search').value = searchTerm;
+  if (filterPlanned !== null) document.getElementById('f-planned').checked = (filterPlanned === 'true');
+  if (filterDone  !== null) document.getElementById('f-done').checked = (filterDone === 'true');
+  if (showDetails !== null) document.getElementById('show-details').checked = (showDetails === 'true');
 }
 
 async function loadProjects() {
-    loadFilterState();
-    const search  = document.getElementById('search').value.trim();
-    const planned = document.getElementById('f-planned').checked;
-    const showDone = document.getElementById('f-done').checked;  
+  loadFilterState();
+  const search   = document.getElementById('search').value.trim();
+  const planned  = document.getElementById('f-planned').checked;
+  const showDone = document.getElementById('f-done').checked;
 
-    const params = new URLSearchParams();  
-    if (planned) params.append('planned', 'true');
-    if (!showDone) params.append('done', 'false');
-    if (search) params.append('search', search);
+  const params = new URLSearchParams();
+  if (planned)   params.append('planned', 'true');
+  if (!showDone) params.append('done', 'false');
+  if (search)    params.append('search', search);
 
-    const url = `/api/projects/?${params.toString()}`;  
-    try {
-        const data = await api('GET', url);
-        allProjects = data.projects;
-        applySortingAndRender();
-        renderCapSummary(data);
-    } catch (e) {
-        console.error("Fehler beim Laden der Projekte:", e);
-    }
-}  
+  const url = `/api/projects/?${params.toString()}`;
+  try {
+    const data = await api('GET', url);
+    allProjects = data.projects;
+    applySortingAndRender();
+    renderCapSummary(data);
+  } catch (e) {
+    console.error("Fehler beim Laden der Projekte:", e);
+  }
+}
 
 function setAndSort(field) {
-if (sortField === field) sortDir *= -1;
-else { sortField = field; sortDir = 1; }
-localStorage.setItem('project_sort_field', sortField);
-localStorage.setItem('project_sort_dir', sortDir);
-applySortingAndRender();
+  if (sortField === field) sortDir *= -1;
+  else { sortField = field; sortDir = 1; }
+  localStorage.setItem('project_sort_field', sortField);
+  localStorage.setItem('project_sort_dir', sortDir);
+  applySortingAndRender();
 }
 
 function applySortingAndRender() {
-    let projectsToRender = [...allProjects];
-
-    if (sortField !== 'sort_order') {
-        projectsToRender.sort((a,b) => {
-            let av = a[sortField];
-            let bv = b[sortField];
-
-            if (sortField === 'start_date' || sortField === 'due_date') {
-                const dateA = av ? new Date(av).getTime() : (sortDir === 1 ? Infinity : -Infinity);
-                const dateB = bv ? new Date(bv).getTime() : (sortDir === 1 ? Infinity : -Infinity);
-                return (dateA - dateB) * sortDir;
-            }
-
-            av = av === null || av === undefined ? '' : av;
-            bv = bv === null || bv === undefined ? '' : bv;
-            
-            if (typeof av === 'string' && typeof bv === 'string') {
-                return av.localeCompare(bv) * sortDir;
-            }
-            return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
-        });
-    }
-    renderProjects(projectsToRender);
-    toggleDetails();
+  let projectsToRender = [...allProjects];
+  if (sortField !== 'sort_order') {
+    projectsToRender.sort((a,b) => {
+      let av = a[sortField], bv = b[sortField];
+      if (sortField === 'start_date' || sortField === 'due_date') {
+        const dateA = av ? new Date(av).getTime() : (sortDir === 1 ? Infinity : -Infinity);
+        const dateB = bv ? new Date(bv).getTime() : (sortDir === 1 ? Infinity : -Infinity);
+        return (dateA - dateB) * sortDir;
+      }
+      av = av === null || av === undefined ? '' : av;
+      bv = bv === null || bv === undefined ? '' : bv;
+      if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * sortDir;
+      return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+    });
+  }
+  renderProjects(projectsToRender);
+  toggleDetails();
 }
 
 function renderProjects(projects) {
-const tbody = document.getElementById('proj-body');
-tbody.innerHTML = projects.map((p, i) => `
+  const tbody = document.getElementById('proj-body');
+  tbody.innerHTML = projects.map((p, i) => `
 <tr draggable="true" data-id="${p.project_id}" data-order="${i}"
-ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)">
-<td style="color:var(--text2);cursor:grab">⠿</td>
-<td>
-<span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-<strong>${p.project_name}</strong>
-</td>
-<td><span class="badge" style="font-size:11px; padding:2px 6px; background:var(--background2); border-radius:4px;">${p.project_type}</span></td> <td>${p.customer}</td>
-<td class="detail-col text-dim">${p.jira_id||''}</td>
-<td class="text-mono">${p.target_hours}</td>
-<td class="detail-col text-mono">${p.impl_hours}</td>
-<td class="detail-col text-mono">${p.test_hours}</td>
-<td><input type="checkbox" ${p.planned?'checked':''} onchange="quickUpdate(${p.project_id},'planned',this.checked)" style="width:auto"></td>
-<td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
-<td class="detail-col" class="text-dim nowrap">${p.start_date||'–'}</td>
-<td class="detail-col" class="text-dim nowrap">${p.due_date||'–'}</td>
-<td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
-<td class="detail-col">
-<span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-<span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
-</td>
-<td class="text-dim" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${p.remarks||''}</td>
-<td>
-<div class="flex-gap">
-<a href="/worked_hours/${p.project_id}" class="btn btn-ghost btn-xs" title="Stundenerfassung">⏱</a>
-${hasEditRights ? `
-<button class="btn btn-ghost btn-xs" onclick="openModal(${p.project_id})">✎</button>
-<button class="btn btn-danger btn-xs" onclick="deleteProject(${p.project_id})">✕</button>
-` : '<span class="text-dim" style="font-size:12px"></span>'}
-</div>
-</td>
-</tr>
-`).join('');
-}  
+    ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)">
+  <td style="color:var(--text2);cursor:grab">⠿</td>
+  <td>
+    <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
+    <strong>${p.project_name}</strong>
+  </td>
+  <td><span class="badge" style="font-size:11px;padding:2px 6px;background:var(--background2);border-radius:4px">${p.project_type}</span></td>
+  <td>${p.customer}</td>
+  <td class="detail-col text-dim">${p.jira_id||''}</td>
+  <td class="text-mono">${p.target_hours}</td>
+  <td class="detail-col text-mono">${p.impl_hours}</td>
+  <td class="detail-col text-mono">${p.test_hours}</td>
+  <td><input type="checkbox" ${p.planned?'checked':''} onchange="quickUpdate(${p.project_id},'planned',this.checked)" style="width:auto"></td>
+  <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
+  <td class="detail-col text-dim nowrap">${p.start_date||'–'}</td>
+  <td class="detail-col text-dim nowrap">${p.due_date||'–'}</td>
+  <td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
+  <td class="detail-col">
+    <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
+    <span class="text-mono" style="font-size:11px">${p.color_hexcode||''}</span>
+  </td>
+  <td class="text-dim" style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${p.remarks||''}</td>
+  <td>
+    <div class="flex-gap">
+      <a href="/worked_hours/${p.project_id}" class="btn btn-ghost btn-xs" title="Stundenerfassung">⏱</a>
+      ${hasEditRights ? `
+        <button class="btn btn-ghost btn-xs" onclick="openModal(${p.project_id})">✎</button>
+        <button class="btn btn-danger btn-xs" onclick="deleteProject(${p.project_id})">✕</button>
+      ` : '<span class="text-dim" style="font-size:12px"></span>'}
+    </div>
+  </td>
+</tr>`).join('');
+}
 
 function renderCapSummary(data) {
-const cap = data.capacity;
-const diff = cap.diff;
-const diffColor = diff > 0 ? 'var(--danger)' : 'var(--accent2)';  
-
-document.getElementById('cap-summary').innerHTML = `
+  const cap = data.capacity;
+  const diff = cap.diff;
+  const diffColor = diff > 0 ? 'var(--danger)' : 'var(--accent2)';
+  document.getElementById('cap-summary').innerHTML = `
 <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
-<div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Geplante Stunden</div>
-<div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${data.sum_target_hours}</div>
+  <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Geplante Stunden</div>
+  <div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${data.sum_target_hours}</div>
 </div>
 <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
-<div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Verfügbare Kapazität</div>
-<div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${Math.round(cap.total_capacity_hours)}</div>
-${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.period_start} – ${cap.period_end}</div>` : ''}
-<div style="font-size:11px;color:var(--text2)">(${cap.period_length_days} Tage, ${cap.working_days_in_period} Arbeitstage, ${cap.holidays_in_period} Feiertage)</div>
+  <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Verfügbare Kapazität</div>
+  <div style="font-size:20px;font-weight:600;font-family:var(--font-mono)">${Math.round(cap.total_capacity_hours)}</div>
+  ${cap.period_start ? `<div style="font-size:11px;color:var(--text2)">${cap.period_start} – ${cap.period_end}</div>` : ''}
+  <div style="font-size:11px;color:var(--text2)">(${cap.period_length_days} Tage, ${cap.working_days_in_period} Arbeitstage, ${cap.holidays_in_period} Feiertage)</div>
 </div>
 <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto;border-color:${diff>0?'var(--danger)':'var(--accent2)'}">
-<div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Differenz</div>
-<div style="font-size:20px;font-weight:600;font-family:var(--font-mono);color:${diffColor}">${diff > 0 ? '-' : '+'}${Math.abs(Math.round(diff))}</div>
-</div>
-`;
-}  
+  <div class="text-dim" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Differenz</div>
+  <div style="font-size:20px;font-weight:600;font-family:var(--font-mono);color:${diffColor}">${diff>0?'-':'+'}${Math.abs(Math.round(diff))}</div>
+</div>`;
+}
 
 async function quickUpdate(id, field, val) {
-try {
-await api('PUT', `/api/projects/${id}`, {[field]: val});
-loadProjects();
-} catch(e) { toast(e.message,'error'); }
-}  
+  try {
+    await api('PUT', `/api/projects/${id}`, {[field]: val});
+    loadProjects();
+  } catch(e) { toast(e.message,'error'); }
+}
 
 async function openModal(id=null) {
-editingId = id;
-document.getElementById('modal-alert').innerHTML = '';
-document.getElementById('modal-title').textContent = id ? 'Projekt bearbeiten' : 'Neues Projekt';  
-
-if (id) {
-const p = allProjects.find(x => x.project_id === id) || await api('GET', `/api/projects/${id}`);
-document.getElementById('f-name').value    = p.project_name;
-document.getElementById('f-type').value    = p.project_type; // Befüllen des Typs
-document.getElementById('f-customer').value= p.customer;
-document.getElementById('f-jira').value    = p.jira_id||'';
-document.getElementById('f-target').value  = p.target_hours;
-document.getElementById('f-impl').value    = p.impl_hours;
-document.getElementById('f-test').value    = p.test_hours;
-document.getElementById('f-planned').checked= p.planned;
-document.getElementById('f-done').checked  = p.done;
-document.getElementById('f-start').value   = p.start_date||'';
-document.getElementById('f-due').value     = p.due_date||'';
-document.getElementById('f-color').value   = p.color_hexcode||'#4A90D9';
-document.getElementById('f-color-hex').textContent = (p.color_hexcode||'').toUpperCase();
-document.getElementById('f-remarks').value = p.remarks||'';
-} else {
-const data = await api('GET', '/api/projects/');
-const suggestedColor = data.suggested_color || '#4A90D9';
-['f-name','f-customer','f-jira','f-target','f-impl','f-test','f-start','f-due','f-remarks']
-.forEach(id=>document.getElementById(id).value='');
-document.getElementById('f-type').value      = 'Project'; // Default setzen
-document.getElementById('f-planned').checked = true;
-document.getElementById('f-done').checked    = false;
-document.getElementById('f-color').value     = suggestedColor;
-document.getElementById('f-color-hex').textContent = suggestedColor.toUpperCase();
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Projekt bearbeiten' : 'Neues Projekt';
+  if (id) {
+    const p = allProjects.find(x => x.project_id === id) || await api('GET', `/api/projects/${id}`);
+    document.getElementById('f-name').value     = p.project_name;
+    document.getElementById('f-type').value     = p.project_type;
+    document.getElementById('f-customer').value = p.customer;
+    document.getElementById('f-jira').value     = p.jira_id||'';
+    document.getElementById('f-target').value   = p.target_hours;
+    document.getElementById('f-impl').value     = p.impl_hours;
+    document.getElementById('f-test').value     = p.test_hours;
+    document.getElementById('f-planned').checked= p.planned;
+    document.getElementById('f-done').checked   = p.done;
+    document.getElementById('f-start').value    = p.start_date||'';
+    document.getElementById('f-due').value      = p.due_date||'';
+    document.getElementById('f-color').value    = p.color_hexcode||'#4A90D9';
+    document.getElementById('f-color-hex').textContent = (p.color_hexcode||'').toUpperCase();
+    document.getElementById('f-remarks').value  = p.remarks||'';
+  } else {
+    const data = await api('GET', '/api/projects/');
+    const suggestedColor = data.suggested_color || '#4A90D9';
+    ['f-name','f-customer','f-jira','f-target','f-impl','f-test','f-start','f-due','f-remarks']
+      .forEach(id=>document.getElementById(id).value='');
+    document.getElementById('f-type').value      = 'Project';
+    document.getElementById('f-planned').checked = true;
+    document.getElementById('f-done').checked    = false;
+    document.getElementById('f-color').value     = suggestedColor;
+    document.getElementById('f-color-hex').textContent = suggestedColor.toUpperCase();
+  }
+  updateWeekNumber('f-start','f-start-kw');
+  updateWeekNumber('f-due','f-due-kw');
+  document.getElementById('modal-backdrop').classList.add('open');
 }
-updateWeekNumber('f-start', 'f-start-kw');
-updateWeekNumber('f-due', 'f-due-kw');
-
-document.getElementById('modal-backdrop').classList.add('open');
-}  
 
 function closeModal() {
-document.getElementById('modal-backdrop').classList.remove('open');
-}  
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
 
 async function saveProject() {
-const al = document.getElementById('modal-alert');
-const payload = {
-project_name: document.getElementById('f-name').value.trim(),
-project_type: document.getElementById('f-type').value, // Payload erweitert
-customer:     document.getElementById('f-customer').value.trim(),
-jira_id:      document.getElementById('f-jira').value.trim()||null,
-target_hours: parseInt(document.getElementById('f-target').value),
-impl_hours:   parseInt(document.getElementById('f-impl').value),
-test_hours:   parseInt(document.getElementById('f-test').value),
-planned:      document.getElementById('f-planned').checked,
-done:         document.getElementById('f-done').checked,
-start_date:   document.getElementById('f-start').value||null,
-due_date:     document.getElementById('f-due').value||null,
-color_hexcode:document.getElementById('f-color').value,
-remarks:      document.getElementById('f-remarks').value.trim()||null,
-};
-try {
-if (editingId) await api('PUT', `/api/projects/${editingId}`, payload);
-else           await api('POST', '/api/projects/', payload);
-closeModal();
-toast('Gespeichert');
-loadProjects();
-refreshCharts();
-} catch(e) {
-al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  const al = document.getElementById('modal-alert');
+  const payload = {
+    project_name: document.getElementById('f-name').value.trim(),
+    project_type: document.getElementById('f-type').value,
+    customer:     document.getElementById('f-customer').value.trim(),
+    jira_id:      document.getElementById('f-jira').value.trim()||null,
+    target_hours: parseInt(document.getElementById('f-target').value),
+    impl_hours:   parseInt(document.getElementById('f-impl').value),
+    test_hours:   parseInt(document.getElementById('f-test').value),
+    planned:      document.getElementById('f-planned').checked,
+    done:         document.getElementById('f-done').checked,
+    start_date:   document.getElementById('f-start').value||null,
+    due_date:     document.getElementById('f-due').value||null,
+    color_hexcode:document.getElementById('f-color').value,
+    remarks:      document.getElementById('f-remarks').value.trim()||null,
+  };
+  try {
+    if (editingId) await api('PUT', `/api/projects/${editingId}`, payload);
+    else           await api('POST', '/api/projects/', payload);
+    closeModal();
+    toast('Gespeichert');
+    loadProjects();
+    refreshCharts();
+  } catch(e) {
+    al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
 }
-}  
 
 async function deleteProject(id) {
-if (!confirm('Projekt wirklich löschen?')) return;
-try {
-await api('DELETE', `/api/projects/${id}`);
-toast('Gelöscht');
-loadProjects();
-refreshCharts();
-} catch(e) { toast(e.message,'error'); }
-}  
+  if (!confirm('Projekt wirklich löschen?')) return;
+  try {
+    await api('DELETE', `/api/projects/${id}`);
+    toast('Gelöscht');
+    loadProjects();
+    refreshCharts();
+  } catch(e) { toast(e.message,'error'); }
+}
 
 function refreshCharts() {
-const ts = Date.now();
-document.getElementById('chart-bar').src = `/api/charts/project_hours_bar?_=${ts}`;
-document.getElementById('chart-cap').src = `/api/charts/capacity_per_week?_=${ts}`;
-}  
+  const ts = Date.now();
+  document.getElementById('chart-bar').src = `/api/charts/project_hours_bar?_=${ts}`;
+  document.getElementById('chart-cap').src = `/api/charts/capacity_per_week?_=${ts}`;
+}
 
-let dragSrcId = null;  
+let dragSrcId = null;
 
 function dragStart(e) {
-dragSrcId = parseInt(e.currentTarget.dataset.id);
-e.dataTransfer.effectAllowed = 'move';
-}  
-
+  dragSrcId = parseInt(e.currentTarget.dataset.id);
+  e.dataTransfer.effectAllowed = 'move';
+}
 function dragOver(e) {
-e.preventDefault();
-e.dataTransfer.dropEffect = 'move';
-}  
-
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+}
 async function drop(e) {
-e.preventDefault();
-const targetId = parseInt(e.currentTarget.dataset.id);
-if (dragSrcId === targetId) return;  
-
-const ids = [...document.querySelectorAll('#proj-body tr')].map(r => parseInt(r.dataset.id));
-const srcIdx = ids.indexOf(dragSrcId);
-const tgtIdx = ids.indexOf(targetId);
-ids.splice(srcIdx, 1);
-ids.splice(tgtIdx, 0, dragSrcId);  
-
-const order = ids.map((id, i) => ({project_id: id, sort_order: i}));
-try {
-await api('PUT', '/api/projects/reorder/bulk', order);
-sortField = 'sort_order';
-sortDir = 1;
-localStorage.setItem('project_sort_field', sortField);
-localStorage.setItem('project_sort_dir', sortDir);
-loadProjects();
-} catch(e) { toast(e.message,'error'); }
-}  
+  e.preventDefault();
+  const targetId = parseInt(e.currentTarget.dataset.id);
+  if (dragSrcId === targetId) return;
+  const ids = [...document.querySelectorAll('#proj-body tr')].map(r => parseInt(r.dataset.id));
+  const srcIdx = ids.indexOf(dragSrcId);
+  const tgtIdx = ids.indexOf(targetId);
+  ids.splice(srcIdx, 1);
+  ids.splice(tgtIdx, 0, dragSrcId);
+  const order = ids.map((id, i) => ({project_id: id, sort_order: i}));
+  try {
+    await api('PUT', '/api/projects/reorder/bulk', order);
+    sortField = 'sort_order'; sortDir = 1;
+    localStorage.setItem('project_sort_field', sortField);
+    localStorage.setItem('project_sort_dir', sortDir);
+    loadProjects();
+  } catch(e) { toast(e.message,'error'); }
+}
 
 function getWeekNumber(dateStr) {
-if (!dateStr) return '–';
-const d = new Date(dateStr);
-if (isNaN(d.getTime())) return '–';
-d.setHours(0, 0, 0, 0);
-d.setDate(d.getDate() + 4 - (d.getDay() || 7));
-const startOfYear = new Date(d.getFullYear(), 0, 1);
-const weekNo = Math.ceil((((d - startOfYear) / 86400000) + 1) / 7);
-return 'KW ' + weekNo;
-}  
+  if (!dateStr) return '–';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '–';
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + 4 - (d.getDay()||7));
+  const startOfYear = new Date(d.getFullYear(), 0, 1);
+  const weekNo = Math.ceil((((d - startOfYear) / 86400000) + 1) / 7);
+  return 'KW ' + weekNo;
+}
+
+// ── Jira-Sync ──────────────────────────────────────────────────────────────────
+
+function openSyncModal() {
+  currentSyncPreview = null;
+  document.getElementById('sync-loading').style.display   = 'none';
+  document.getElementById('sync-error').classList.add('hidden');
+  document.getElementById('sync-preview').style.display   = 'none';
+  document.getElementById('sync-footer').style.display    = 'none';
+  document.getElementById('sync-modal-backdrop').classList.add('open');
+}
+
+function closeSyncModal() {
+  document.getElementById('sync-modal-backdrop').classList.remove('open');
+}
+
+async function startJiraSync() {
+  openSyncModal();
+  const loadingEl = document.getElementById('sync-loading');
+  const errorEl   = document.getElementById('sync-error');
+  const previewEl = document.getElementById('sync-preview');
+  const footerEl  = document.getElementById('sync-footer');
+
+  loadingEl.style.display = 'block';
+
+  try {
+    const data = await api('POST', `/api/sync/${SYNC_ROUTER}/${SYNC_SOURCE}/preview`);
+    currentSyncPreview = data;
+    loadingEl.style.display = 'none';
+    renderSyncPreview(data);
+    previewEl.style.display = 'block';
+    footerEl.style.display  = 'flex';
+    updateSyncSelectionInfo();
+  } catch(e) {
+    loadingEl.style.display = 'none';
+    errorEl.textContent = `Fehler beim Abrufen der Jira-Daten: ${e.message}`;
+    errorEl.classList.remove('hidden');
+  }
+}
+
+function renderSyncPreview(data) {
+  // Zusammenfassung
+  const s = data.summary;
+  document.getElementById('sync-summary').innerHTML = `
+<div class="card" style="padding:10px 14px;margin:0;flex:0 0 auto">
+  <div class="text-dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em">Aktualisierungen</div>
+  <div style="font-size:22px;font-weight:600;font-family:var(--font-mono);color:var(--warn)">${s.updates}</div>
+</div>
+<div class="card" style="padding:10px 14px;margin:0;flex:0 0 auto">
+  <div class="text-dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em">Neue Projekte</div>
+  <div style="font-size:22px;font-weight:600;font-family:var(--font-mono);color:var(--accent2)">${s.creates}</div>
+</div>
+<div class="card" style="padding:10px 14px;margin:0;flex:0 0 auto">
+  <div class="text-dim" style="font-size:10px;text-transform:uppercase;letter-spacing:.05em">Unverändert</div>
+  <div style="font-size:22px;font-weight:600;font-family:var(--font-mono);color:var(--text2)">${s.skipped}</div>
+</div>`;
+
+  // Updates rendern
+  const updates = data.diffs.filter(d => d.change_type === 'update');
+  const creates = data.diffs.filter(d => d.change_type === 'create');
+
+  const updatesEl = document.getElementById('sync-updates-list');
+  const createsEl = document.getElementById('sync-creates-list');
+
+  if (updates.length === 0) {
+    document.getElementById('sync-updates-empty').style.display = 'block';
+    updatesEl.innerHTML = '';
+  } else {
+    document.getElementById('sync-updates-empty').style.display = 'none';
+    updatesEl.innerHTML = updates.map((d, i) => renderUpdateCard(d, i)).join('');
+  }
+
+  if (creates.length === 0) {
+    document.getElementById('sync-creates-empty').style.display = 'block';
+    createsEl.innerHTML = '';
+  } else {
+    document.getElementById('sync-creates-empty').style.display = 'none';
+    createsEl.innerHTML = creates.map((d, i) => renderCreateCard(d, i)).join('');
+  }
+
+  // Standardmäßig alle angehakt
+  document.querySelectorAll('.sync-checkbox').forEach(cb => cb.checked = true);
+}
+
+function renderUpdateCard(diff, idx) {
+  const changesRows = diff.changes.map(ch => `
+<tr>
+  <td style="color:var(--text2)">${ch.display_name}</td>
+  <td><span class="val-old">${ch.current_value ?? '–'}</span></td>
+  <td><span class="val-new">${ch.new_value ?? '–'}</span></td>
+</tr>`).join('');
+
+  return `
+<div class="sync-diff-card" data-diff-idx="${idx}" data-diff-type="update">
+  <div class="sync-diff-header" onclick="toggleDiffBody(this)">
+    <input type="checkbox" class="sync-checkbox" data-diff-type="update" data-diff-idx="${idx}"
+           onclick="event.stopPropagation(); updateSyncSelectionInfo()"
+           title="Diese Änderung übernehmen">
+    <span style="font-weight:600">${diff.display_name}</span>
+    <span class="text-dim" style="font-size:11px">${diff.external_id}</span>
+    <span class="badge" style="background:rgba(230,126,34,0.15);color:var(--warn);font-size:10px">
+      ${diff.changes.length} Änderung${diff.changes.length !== 1 ? 'en' : ''}
+    </span>
+    <span style="margin-left:auto;color:var(--text2);font-size:12px">▼</span>
+  </div>
+  <div class="sync-diff-body" style="display:none">
+    <table class="sync-diff-table">
+      <thead><tr><th>Feld</th><th>Aktuell</th><th>Neu (Jira)</th></tr></thead>
+      <tbody>${changesRows}</tbody>
+    </table>
+  </div>
+</div>`;
+}
+
+function renderCreateCard(diff, idx) {
+  const fieldsRows = diff.changes.map(ch => `
+<tr>
+  <td style="color:var(--text2)">${ch.display_name}</td>
+  <td><span class="val-new-create">${ch.new_value ?? '–'}</span></td>
+</tr>`).join('');
+
+  return `
+<div class="sync-diff-card" data-diff-idx="${idx}" data-diff-type="create">
+  <div class="sync-diff-header" onclick="toggleDiffBody(this)">
+    <input type="checkbox" class="sync-checkbox" data-diff-type="create" data-diff-idx="${idx}"
+           onclick="event.stopPropagation(); updateSyncSelectionInfo()"
+           title="Dieses Projekt importieren">
+    <span style="font-weight:600">${diff.display_name}</span>
+    <span class="text-dim" style="font-size:11px">${diff.external_id}</span>
+    <span class="badge" style="background:rgba(46,204,113,0.15);color:var(--accent2);font-size:10px">Neu</span>
+    <span style="margin-left:auto;color:var(--text2);font-size:12px">▼</span>
+  </div>
+  <div class="sync-diff-body" style="display:none">
+    <table class="sync-diff-table">
+      <thead><tr><th>Feld</th><th>Wert (aus Jira)</th></tr></thead>
+      <tbody>${fieldsRows}</tbody>
+    </table>
+  </div>
+</div>`;
+}
+
+function toggleDiffBody(headerEl) {
+  const body = headerEl.nextElementSibling;
+  const arrow = headerEl.querySelector('span:last-child');
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (arrow) arrow.textContent = isOpen ? '▼' : '▲';
+}
+
+function switchSyncTab(tab) {
+  document.querySelectorAll('.sync-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('sync-tab-updates').style.display = tab === 'updates' ? '' : 'none';
+  document.getElementById('sync-tab-creates').style.display = tab === 'creates' ? '' : 'none';
+}
+
+function updateSyncSelectionInfo() {
+  const checked = document.querySelectorAll('.sync-checkbox:checked').length;
+  const total   = document.querySelectorAll('.sync-checkbox').length;
+  document.getElementById('sync-selection-info').textContent =
+    `${checked} von ${total} Änderungen ausgewählt`;
+  document.getElementById('btn-sync-apply').disabled = checked === 0;
+}
+
+async function applySync() {
+  if (!currentSyncPreview) return;
+
+  const allDiffs = currentSyncPreview.diffs;
+  const selectedDiffs = [];
+
+  document.querySelectorAll('.sync-checkbox:checked').forEach(cb => {
+    const type = cb.dataset.diffType;
+    const idx  = parseInt(cb.dataset.diffIdx);
+    const matching = allDiffs.filter(d => d.change_type === type);
+    if (matching[idx]) selectedDiffs.push(matching[idx]);
+  });
+
+  if (selectedDiffs.length === 0) {
+    toast('Keine Änderungen ausgewählt.', 'error');
+    return;
+  }
+
+  document.getElementById('btn-sync-apply').disabled = true;
+  document.getElementById('btn-sync-apply').textContent = '…';
+
+  try {
+    const result = await api('POST', `/api/sync/${SYNC_ROUTER}/${SYNC_SOURCE}/apply`,
+      { diffs: selectedDiffs });
+    closeSyncModal();
+    toast(`Sync abgeschlossen: ${result.created} neu, ${result.updated} aktualisiert`
+      + (result.errors.length ? ` (${result.errors.length} Fehler)` : ''));
+    loadProjects();
+    refreshCharts();
+  } catch(e) {
+    toast(`Fehler beim Übernehmen: ${e.message}`, 'error');
+    document.getElementById('btn-sync-apply').disabled = false;
+    document.getElementById('btn-sync-apply').textContent = 'Übernehmen';
+  }
+}
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadProjects();
+  loadProjects();
 });
 </script>
 {% endblock %}
