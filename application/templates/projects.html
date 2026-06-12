@@ -17,7 +17,9 @@
 <div class="card">
 <div class="card-header">
 <h1>Projektverwaltung</h1>
+{% if has_edit_rights %}
 <button class="btn btn-primary" onclick="openModal()">+ Neues Projekt</button>
+{% endif %}
 </div>  
 
 <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:16px">
@@ -159,6 +161,8 @@ let sortField = localStorage.getItem('project_sort_field') || 'sort_order';
 let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1'); 
 let allProjects = [];  
 
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
 document.getElementById('f-color')?.addEventListener('input', function() {
 document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
 });  
@@ -297,8 +301,10 @@ ondragstart="dragStart(event)" ondragover="dragOver(event)" ondrop="drop(event)"
 <td>
 <div class="flex-gap">
 <a href="/worked_hours/${p.project_id}" class="btn btn-ghost btn-xs" title="Stundenerfassung">⏱</a>
+${hasEditRights ? `
 <button class="btn btn-ghost btn-xs" onclick="openModal(${p.project_id})">✎</button>
 <button class="btn btn-danger btn-xs" onclick="deleteProject(${p.project_id})">✕</button>
+` : '<span class="text-dim" style="font-size:12px"></span>'}
 </div>
 </td>
 </tr>

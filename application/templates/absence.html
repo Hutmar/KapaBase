@@ -26,7 +26,9 @@
 <div class="card">
     <div class="card-header">
         <h1>Abwesenheitsverwaltung</h1>
+		{% if has_edit_rights %}
         <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
+		{% endif %}
     </div>
 
     <!-- Neue Abwesenheitsübersichtstabelle -->
@@ -119,6 +121,7 @@
 let editingId = null;
 const STAFF_FILTER_KEY = 'absenceStaffFilter'; // Schlüssel für localStorage
 const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed'; // Schlüssel für localStorage für Collapsible
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
 async function init() {
     const staffResponse = await api('GET', '/api/staff/'); // Erhalte die gesamte Antwort
@@ -289,8 +292,10 @@ async function loadAbsences() {
                 <td><span class="badge" style="background:rgba(74,144,217,0.15);color:#4A90D9">${a.absence_type}</span></td>
                 <td>
                     <div class="flex-gap">
+					${hasEditRights ? `
                         <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">✎</button>
                         <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>
+					` : '<span class="text-dim" style="font-size:12px"></span>'}
                     </div>
                 </td>
             </tr>

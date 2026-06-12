@@ -8,7 +8,9 @@
       <h1 id="page-title">Stundenerfassung</h1>
       <div class="text-dim" style="font-size:12px" id="page-subtitle"></div>
     </div>
+	{% if has_edit_rights %}
     <button class="btn btn-primary" onclick="openModal()">+ Neuer Eintrag</button>
+	{% endif %}
   </div>
 
   <!-- Soll vs. Ist Übersicht -->
@@ -63,6 +65,7 @@
 const projectId = {{ project_id }};
 let editingId = null;
 let allEntries = [];
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
 async function loadData() {
   const data = await api('GET', `/api/worked_hours/${projectId}`);
@@ -115,8 +118,10 @@ async function loadData() {
       <td class="text-mono">${e.impl_hours + e.test_hours}</td>
       <td>
         <div class="flex-gap">
+		${hasEditRights ? `
           <button class="btn btn-ghost btn-xs" onclick="openModal(${e.worked_hours_id})">✎</button>
           <button class="btn btn-danger btn-xs" onclick="deleteEntry(${e.worked_hours_id})">✕</button>
+		 ` : '<span class="text-dim" style="font-size:12px"></span>'}
         </div>
       </td>
     </tr>

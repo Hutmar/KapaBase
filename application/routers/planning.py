@@ -223,9 +223,24 @@ def get_planning(
         today_iso  = today.isocalendar()
         cur_monday = date.fromisocalendar(today_iso[0], today_iso[1], 1)
 
-        # Wenn use_current_week True ist, Start immer heute.
-        # Im planning_status-Kontext ist use_current_week immer True.
-        start_date = cur_monday
+
+        if not use_current_week:
+
+            db_start = range_row["min_start"] if (range_row and range_row["min_start"]) else None
+            cur.execute("SELECT MIN(start_date) AS min_plan FROM planning")
+            plan_row = cur.fetchone()
+            if plan_row and plan_row["min_plan"]:
+                if not db_start or plan_row["min_plan"] < db_start:
+                    db_start = plan_row["min_plan"]
+            
+            if db_start:
+                ds_iso = db_start.isocalendar()
+                start_date = date.fromisocalendar(ds_iso[0], ds_iso[1], 1)
+            else:
+                start_date = cur_monday
+        else:
+            start_date = cur_monday
+
 
         # Für end_date, entweder max_due der gefilterten Projekte oder 12 Wochen nach start_date
         if range_row and range_row["max_due"]:

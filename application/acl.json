@@ -1,0 +1,20 @@
+{
+  "staff": {
+    "edit": ["localhost"]
+  },
+  "tasks": {
+    "edit": ["localhost"]
+  },
+  "projects": {
+    "edit": ["localhost"]
+  },
+  "planning": {
+    "edit": ["localhost"]
+  },
+  "absence": {
+    "edit": ["localhost"]
+  },
+  "worked_hours": {
+    "edit": ["localhost"]
+  }
+}
