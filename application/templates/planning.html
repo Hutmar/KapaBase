@@ -287,13 +287,21 @@ width: 100%; /* Volle Breite im Container */
 box-sizing: border-box; /* Padding wird in die Breite eingerechnet */
 margin-bottom: 10px; /* Abstand zur Tabelle */
 }
+.matrix-collapsed {
+    display: none !important;
+}
 </style>  
 <!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
 <div class="card" style="padding-bottom:0">
+<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 0px;">
+    <button id="toggle-planning-matrix-btn" class="btn btn-secondary btn-sm">
+        <span class="icon">▼</span>
+    </button>
+	<h2 style="margin: 0;">Ressourcenplanung</h2>
+</div>
 <div class="card-header" style="padding-bottom:16px">
-<h1>Ressourcenplanung</h1>
 <!-- Geänderter Filterbereich -->
-<div class="centered-filter-container">
+<div id="filterBox" class="centered-filter-container">
 <div class="filter-box">
 <label class="flex-gap text-dim" style="font-size:12px">
 <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadPlanning()">
@@ -578,6 +586,29 @@ toggleTimeRangeFilters();
 loadPlanning();
 });
 // Already have onchange="loadPlanning()" on the select elements directly in HTML.
+
+const toggleBtn = document.getElementById('toggle-planning-matrix-btn');
+	const filterBox = document.getElementById('filterBox');
+    const headerWrap = document.getElementById('planning-header-wrap');
+    const bodyWrap = document.getElementById('planning-body-wrap');
+
+    if (toggleBtn && filterBox && headerWrap && bodyWrap) {
+        toggleBtn.addEventListener('click', () => {
+            // Klasse toggeln
+            filterBox.classList.toggle('matrix-collapsed');
+			headerWrap.classList.toggle('matrix-collapsed');
+            bodyWrap.classList.toggle('matrix-collapsed');
+
+            // Button-Text und Icon anpassen
+            const isCollapsed = headerWrap.classList.contains('matrix-collapsed');
+            if (isCollapsed) {
+                toggleBtn.innerHTML = '<span class="icon">▶</span>';
+            } else {
+                toggleBtn.innerHTML = '<span class="icon">▼</span>';
+            }
+        });
+    }
+
 });  
 // ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
 function weekMonday(weekKey) {

@@ -37,8 +37,7 @@ app.include_router(forecast.router,     prefix="/api/forecast",     tags=["Forec
 
 @app.get("/", response_class=HTMLResponse)
 async def page_index(request: Request):
-    editable = has_permission(request, "planning", "edit")
-    return templates.TemplateResponse("planning.html", {"request": request, "has_edit_rights": editable})
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/staff", response_class=HTMLResponse)
 async def page_staff(request: Request):

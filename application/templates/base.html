@@ -334,7 +334,8 @@
 {% block page_navbar %}
 <nav>
   <span class="logo">
-   <img src="{{ url_for('static', path='logo.png') }}" alt="KapaBase"> &nbsp; KapaBase
+   <a href="/">
+   <img src="{{ url_for('static', path='logo.png') }}" alt="KapaBase"></a>
   </span>
   <a href="/staff"    id="nav-staff">Mitarbeiter</a>
   <a href="/absence"  id="nav-absence">Abwesenheiten</a>
