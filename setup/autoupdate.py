@@ -6,8 +6,8 @@ import time
 # =======================
 # CONFIG
 # =======================
-SERVICE_NAME = "xy"
-HEALTHCHECK_URL = "https://example.com/health"
+SERVICE_NAME = "kapaBase.service"
+HEALTHCHECK_URL = "http://localhost:8000/planning_status?task_ids=1"
 BRANCH = "main"
 RESTART_CMD = ["sudo", "systemctl", "restart", SERVICE_NAME]
 
