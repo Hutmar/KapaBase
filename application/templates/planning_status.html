@@ -2,15 +2,13 @@
 
 {% block title %}Planungsstatus – Kapaverwaltung{% endblock %}
 
-{% block page_navbar %}{% endblock %} {# <-- Dieser Block wird leer überschrieben, um die Navbar auszublenden #}
+{% block page_navbar %}{% endblock %}
 
 {% block content %}
 <style>
-/* Bestehende Styles von planning.html (unverändert oder kleinere Anpassungen) */
-/* Der Wert für 'top' im #planning-header-wrap ist hier die entscheidende Anpassung */
 #planning-header-wrap {
     position: sticky;
-    top: 0px; /* Dieser Wert sollte auf 0 gesetzt werden, da keine Navbar mehr darüber ist */
+    top: 0px;
     z-index: 20;
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
@@ -94,7 +92,6 @@
 .planning-body-table td.droptarget:hover {
     outline: none;
 }
-
 .absent-cell {
     background: repeating-linear-gradient(
         -45deg,
@@ -154,7 +151,38 @@
     font-weight: 600;
     border-top: 2px solid var(--border);
 }
-
+/* Liefertermin-Zeile */
+.delivery-row td {
+    background: var(--bg2);
+    min-height: 36px;
+    height: auto;
+    padding: 4px;
+    text-align: center;
+    vertical-align: middle;
+    border-top: 1px solid var(--border);
+}
+.delivery-row td.staff-name {
+    background: var(--bg2);
+    color: var(--text2);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: left;
+}
+.delivery-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 82px;
+    height: 22px;
+    margin: 1px;
+}
 .cell-dropdown {
     position: absolute;
     top: 100%;
@@ -184,34 +212,12 @@
     outline: 1px solid var(--accent);
     outline-offset: -1px;
 }
-.forecast-modal .modal {
-    max-width: 90vw;
-    width: fit-content;
-    min-width: 650px;
-    padding: 20px;
-    background: var(--bg);
-}
-.forecast-chart-container svg {
-    display: block;
-    max-width: 100%;
-    height: auto;
-}
-.modal-backdrop.forecast-modal {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.card-header {
-    padding-bottom: 8px;
-}
+.card-header { padding-bottom: 8px; }
 </style>
 
-<!-- ── Ressourcenmatrix ───────────────────────────────────────────────────── -->
 <div class="card" style="padding-bottom:0">
     <div class="card-header">
         <h1 id="planning-header-title">Planungsstatus</h1>
-        <!-- Die Filterleiste wurde komplett entfernt -->
     </div>
 
     <div id="planning-header-wrap">
@@ -243,43 +249,30 @@
     </div>
 </div>
 
-<div class="modal-backdrop forecast-modal" id="forecast-modal" style="display:none;">
-    <div class="modal">
-        <div class="modal-title">Liefertermin Forecast</div>
-        <div id="forecast-chart-container" style="min-width: 600px; min-height: 400px; display: flex; align-items: center; justify-content: center;">
-            <p class="text-dim">Forecast-Ansicht in diesem Modus deaktiviert.</p>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-ghost" onclick="closeForecastModal()">Schließen</button>
-        </div>
-    </div>
-</div>
-
 {% endblock %}
 
 {% block scripts %}
 <script>
-// ── State ──────────────────────────────────────────────────────────────────────
 let planningData = null;
-let dragPayload  = null;
-let assignTarget = null;
 let openDropdownCell = null;
 let _dropdownItems = [];
 let _filteredDropdownItems = [];
 let _dropdownSearchTerm = '';
 let _activeDropdownItemIndex = -1;
-let _allProjectStatusRows = [];
-let _allAvailableWeeksForDropdown = null;
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
-// Globale Variablen für Filter-Parameter aus den Jinja2-Templates
+// Filter-Parameter aus Jinja2
 const globalFilterProjectIds = "{{ filter_project_ids or '' }}";
 const globalFilterProjectNames = "{{ filter_project_names or '' }}";
 const globalFilterTaskIds = "{{ filter_task_ids or '' }}";
 const globalFilterTaskNames = "{{ filter_task_names or '' }}";
 
-// ── Dynamische Überschrift setzen ──────────────────────────────────────────────
+// variant_id: zuerst aus URL-Param, dann aus Jinja2-Kontext (falls übergeben)
+const urlParams = new URLSearchParams(window.location.search);
+const URL_VARIANT_ID = urlParams.get('variant_id') ? parseInt(urlParams.get('variant_id')) : null;
+
+// ── Dynamische Überschrift ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
     let titleParts = [];
     if (globalFilterProjectNames) {
@@ -287,7 +280,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (globalFilterProjectIds) {
         titleParts.push(`Projekte (IDs: ${globalFilterProjectIds})`);
     }
-
     if (globalFilterTaskNames) {
         titleParts.push(globalFilterTaskNames.split(',').map(s => s.trim()).join(', '));
     } else if (globalFilterTaskIds) {
@@ -302,26 +294,13 @@ document.addEventListener('DOMContentLoaded', () => {
         titleElement.textContent = `Planungsstatus (Ungefiltert)`;
         document.title = `Planungsstatus – Ungefiltert`;
     }
+
+    loadPlanning();
 });
 
-
-// ── Einklapp-Zustand (Sektionen entfernt, Funktionen inaktiv) ─────────────────────
-const sectionState = { 'proj-section': true, 'task-section': true };
-function toggleSection(sectionId, toggleId) { /* Inaktiv */ }
-function applySectionState(sectionId, toggleId) { /* Inaktiv */ }
-function initSections() { /* Inaktiv */ }
-
-// --- `api`-Funktion zur Handhabung verschiedener Content-Typen (unverändert) ---
 async function api(method, url, body = null, expectedResponseContentType = 'application/json') {
-    const options = {
-        method: method,
-        headers: {
-            'Content-Type': 'application/json'
-        }
-    };
-    if (body) {
-        options.body = JSON.stringify(body);
-    }
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) options.body = JSON.stringify(body);
     const response = await fetch(url, options);
     if (!response.ok) {
         let errorData = { message: `HTTP Error ${response.status} - ${response.statusText}` };
@@ -330,13 +309,9 @@ async function api(method, url, body = null, expectedResponseContentType = 'appl
             if (errorText) {
                 if (response.headers.get('Content-Type')?.includes('application/json')) {
                     errorData = JSON.parse(errorText);
-                } else {
-                    errorData.detail = errorText;
-                }
+                } else { errorData.detail = errorText; }
             }
-        } catch (e) {
-            console.error("Fehler beim Parsen der Fehlerantwort:", e);
-        }
+        } catch (e) { console.error("Fehler beim Parsen der Fehlerantwort:", e); }
         throw new Error(errorData.detail || errorData.message || "Unbekannter Fehler");
     }
     if (expectedResponseContentType === 'text/xml' || expectedResponseContentType === 'image/svg+xml') {
@@ -346,11 +321,10 @@ async function api(method, url, body = null, expectedResponseContentType = 'appl
     }
 }
 
-// ── Daten laden ────────────────────────────────────────────────────────────────
 async function loadPlanning() {
-    let url = `/api/planning/?use_current_week=true`; // Immer aktuelle KW, kein end_week
+    let url = `/api/planning/?use_current_week=true`;
 
-    // Filter-Parameter aus den globalen Variablen zur URL hinzufügen
+    if (URL_VARIANT_ID !== null) url += `&variant_id=${URL_VARIANT_ID}`;
     if (globalFilterProjectIds) url += `&filter_project_ids=${encodeURIComponent(globalFilterProjectIds)}`;
     if (globalFilterProjectNames) url += `&filter_project_names=${encodeURIComponent(globalFilterProjectNames)}`;
     if (globalFilterTaskIds) url += `&filter_task_ids=${encodeURIComponent(globalFilterTaskIds)}`;
@@ -358,20 +332,14 @@ async function loadPlanning() {
 
     try {
         planningData = await api('GET', url);
-        // Nach erfolgreichem Laden, Leeren der Tabelle, falls zuvor eine Fehlermeldung angezeigt wurde
         document.getElementById('planning-tbody').innerHTML = '';
         document.getElementById('planning-thead').innerHTML = '';
     } catch(e) {
         toast('Fehler beim Laden der Planung: ' + e.message, 'error');
         console.error(e);
-        // Tabelle leeren und Fehlermeldung direkt anzeigen
         document.getElementById('planning-tbody').innerHTML = `
-            <tr>
-                <td colspan="99" style="text-align:center; padding: 20px; color: var(--danger); font-weight: 500;">
-                    ${esc(e.message)}
-                </td>
-            </tr>`;
-        document.getElementById('planning-thead').innerHTML = ''; // Header auch leeren
+            <tr><td colspan="99" style="text-align:center;padding:20px;color:var(--danger);font-weight:500;">${esc(e.message)}</td></tr>`;
+        document.getElementById('planning-thead').innerHTML = '';
         return;
     }
 
@@ -379,29 +347,13 @@ async function loadPlanning() {
     catch(e) {
         toast('Render-Fehler: ' + e.message, 'error');
         console.error(e);
-        // Render-Fehler ebenfalls in der Tabelle anzeigen
         document.getElementById('planning-tbody').innerHTML = `
-            <tr>
-                <td colspan="99" style="text-align:center; padding: 20px; color: var(--danger); font-weight: 500;">
-                    ${esc(e.message)}
-                </td>
-            </tr>`;
+            <tr><td colspan="99" style="text-align:center;padding:20px;color:var(--danger);font-weight:500;">${esc(e.message)}</td></tr>`;
         document.getElementById('planning-thead').innerHTML = '';
-        return;
     }
-    renderDragSources();
 }
 
-async function ensureWeekDropdownsPopulated() { /* Inaktiv */ }
-function populateWeekDropdown(selectId, weeks, currentVal, defaultLabel) { /* Inaktiv */ }
-function toggleTimeRangeFilters() { /* Inaktiv */ }
-
-
-document.addEventListener('DOMContentLoaded', () => {
-    loadPlanning();
-});
-
-// ── ISO-Hilfsfunktionen (unverändert) ────────────────────────────────────────────────────────
+// ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
 function weekMonday(weekKey) {
     const [yearStr, wStr] = weekKey.split('-W');
     const year = parseInt(yearStr), week = parseInt(wStr);
@@ -416,31 +368,20 @@ function weekFriday(weekKey) {
     return new Date(mon.getTime() + 4 * 86400000);
 }
 
-function fmtDate(d) {
-    return `${d.getUTCDate()}.${d.getUTCMonth()+1}.`;
-}
+function fmtDate(d) { return `${d.getUTCDate()}.${d.getUTCMonth()+1}.`; }
 
 function getIsoWeek(d) {
     const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
     const y1 = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
-    return {
-        year: utc.getUTCFullYear(),
-        week: Math.ceil((((utc - y1) / 86400000) + 1) / 7),
-    };
+    return { year: utc.getUTCFullYear(), week: Math.ceil((((utc - y1) / 86400000) + 1) / 7) };
 }
 
-function _nextWeekKey(baseDate, weeksToAdd) {
-    const nextWeekDate = new Date(baseDate.getTime());
-    nextWeekDate.setDate(baseDate.getDate() + (7 * weeksToAdd));
-    const nxt_iso = getIsoWeek(nextWeekDate);
-    return `${nxt_iso.year}-W${String(nxt_iso.week).padStart(2,'0')}`;
-}
-
-// ── Matrix rendern (unverändert, außer remove-btn) ─────────────────────────────────────────────
+// ── Matrix rendern ─────────────────────────────────────────────────────────────
 function renderMatrix() {
     const { weeks, staff_roles, capacity_totals,
-            capacity_by_staff, plannings, absence_map } = planningData;
+            capacity_by_staff, plannings, absence_map,
+            ist_kw_map } = planningData;
 
     const today    = new Date();
     const todayIso = getIsoWeek(today);
@@ -454,54 +395,40 @@ function renderMatrix() {
         ${weeks.map(() => `<col style="width:${COL_KW}px;min-width:${COL_KW}px">`).join('')}
     </colgroup>`;
 
-    // Monats-Gruppen
     const monthGroups = [];
     let curMonth = null;
     weeks.forEach(wk => {
         const m = weekMonday(wk);
         const label = `${MONTHS_DE[m.getUTCMonth()]} ${m.getUTCFullYear()}`;
-        if (label === curMonth) {
-            monthGroups[monthGroups.length - 1].colspan++;
-        } else {
-            curMonth = label;
-            monthGroups.push({ label, colspan: 1 });
-        }
+        if (label === curMonth) monthGroups[monthGroups.length - 1].colspan++;
+        else { curMonth = label; monthGroups.push({ label, colspan: 1 }); }
     });
 
-    // Monatszeile
     let monthRowHtml = '<tr class="month-row"><th class="staff-col"></th>';
-    monthGroups.forEach(g => {
-        monthRowHtml += `<th colspan="${g.colspan}">${g.label}</th>`;
-    });
+    monthGroups.forEach(g => { monthRowHtml += `<th colspan="${g.colspan}">${g.label}</th>`; });
     monthRowHtml += '</tr>';
 
-    // KW-Zeile – mit Tooltip "Mo-Fr Datum"
     let kwRowHtml = '<tr class="kw-row"><th class="staff-col">Mitarbeiter / Rolle</th>';
     weeks.forEach(wk => {
         const isCurrent = (wk === currentWk);
-        const isPast       = wk < currentWk;
+        const isPast    = wk < currentWk;
         const kwNum = parseInt(wk.split('-W')[1]);
         const mon   = weekMonday(wk);
         const fri   = weekFriday(wk);
         const tip   = `${fmtDate(mon)}–${fmtDate(fri)}`;
         const pastStyle = isPast ? 'opacity:.5;' : '';
-        kwRowHtml += `<th class="${isCurrent ? 'kw-header-current' : ''}"
-            style="${pastStyle}" title="${tip}">KW ${kwNum}</th>`;
+        kwRowHtml += `<th class="${isCurrent ? 'kw-header-current' : ''}" style="${pastStyle}" title="${tip}">KW ${kwNum}</th>`;
     });
     kwRowHtml += '</tr>';
 
-    // Header einsetzen
     const headerTable = document.getElementById('planning-header-table');
     const oldCg = headerTable.querySelector('colgroup');
     if (oldCg) oldCg.remove();
     headerTable.insertAdjacentHTML('afterbegin', colgroupHtml);
     document.getElementById('planning-thead').innerHTML = monthRowHtml + kwRowHtml;
 
-    // Body-Zeilen
-    const devs  = staff_roles.filter(r => r.role === 'Developer')
-                            .sort((a,b) => a.shortname.localeCompare(b.shortname));
-    const tests = staff_roles.filter(r => r.role === 'Tester')
-                            .sort((a,b) => a.shortname.localeCompare(b.shortname));
+    const devs  = staff_roles.filter(r => r.role === 'Developer').sort((a,b) => a.shortname.localeCompare(b.shortname));
+    const tests = staff_roles.filter(r => r.role === 'Tester').sort((a,b) => a.shortname.localeCompare(b.shortname));
     const ordered = [...devs, ...tests];
 
     let tbody = '';
@@ -525,29 +452,24 @@ function renderMatrix() {
             </td>`;
 
         weeks.forEach(wk => {
-            const isCurrent = (wk === currentWk);
             const isPast       = wk < currentWk;
-            const capHours     = (capData.week_hours || {})[wk] || 0;
             const absInfo      = staffAbs[wk];
             const allWeekItems = staffPlan[wk] || [];
             const weekItems    = allWeekItems.filter(pl => pl.role_id === sr.role_id);
             const blockedByOtherRole = allWeekItems.some(pl => pl.role_id !== sr.role_id);
 
-            // Vergangene KW: ausgegraut, keine Interaktion
             if (isPast) {
                 const chips = weekItems.map(pl => {
                     const label  = esc(pl.task_name || pl.project_name || '?');
                     const color  = pl.task_color || pl.project_color || '#555';
                     const txtCol = contrastColor(color);
                     const outdated = pl.is_outdated ? ' outdated' : '';
-                    return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
-                            title="${label}">${label}</div>`;
+                    return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}" title="${label}">${label}</div>`;
                 }).join('');
                 row += `<td class="past-cell" title="Vergangene KW">${chips}</td>`;
                 return;
             }
 
-            // Abwesenheit – Mehrheit
             if (absInfo && absInfo.is_majority) {
                 const label = absInfo.type || 'Abwesend';
                 const frac  = absInfo.total_days > 0 ? `${absInfo.absent_days}/${absInfo.total_days} T.` : '';
@@ -558,48 +480,59 @@ function renderMatrix() {
                 return;
             }
 
-            // Gesperrt weil andere Rolle bereits eingeplant
             if (blockedByOtherRole && weekItems.length === 0) {
                 const bl = esc((allWeekItems[0] || {}).task_name || (allWeekItems[0] || {}).project_name || '');
-                row += `<td class="absent-cell" style="font-size:10px"
-                        title="Andere Rolle eingeplant: ${bl}">
-                        <span style="opacity:.6">— ${bl} —</span>
-                    </td>`;
+                row += `<td class="absent-cell" style="font-size:10px" title="Andere Rolle eingeplant: ${bl}">
+                    <span style="opacity:.6">— ${bl} —</span>
+                </td>`;
                 return;
             }
 
             const partialClass = (absInfo && absInfo.absent_days > 0) ? ' partial-absent-cell' : '';
+            const capHours     = (capData.week_hours || {})[wk] || 0;
             const mon   = weekMonday(wk);
             const fri   = weekFriday(wk);
             const tooltip = `KW ${parseInt(wk.split('-W')[1])}: ${fmtDate(mon)}–${fmtDate(fri)} | Kap: ${Math.round(capHours*10)/10}h`
-                            + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
+                          + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
             const chips = weekItems.map(pl => {
-                const label     = esc(pl.task_name || pl.project_name || '?');
-                const color     = pl.task_color || pl.project_color || '#555';
-                const txtCol    = contrastColor(color);
-                const outdated  = pl.is_outdated ? ' outdated' : '';
-                const oTitle    = pl.is_is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
-                return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}"
-                        title="${label}${oTitle}">
-                        <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
-                        </div>`; // remove-btn hier entfernt
+                const label    = esc(pl.task_name || pl.project_name || '?');
+                const color    = pl.task_color || pl.project_color || '#555';
+                const txtCol   = contrastColor(color);
+                const outdated = pl.is_outdated ? ' outdated' : '';
+                return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}" title="${label}">
+                    <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
+                </div>`;
             }).join('');
 
-            row += `<td class="droptarget${partialClass}"
-                    ondragover="event.preventDefault();"
-                    ondrop="event.preventDefault();"
-                    onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"
-                    title="${tooltip}">${chips}</td>`;
+            row += `<td class="droptarget${partialClass}" title="${tooltip}">${chips}</td>`;
         });
         row += '</tr>';
         tbody += row;
     });
 
-    // Kapazitäts-Summen-Zeile
+    // ── Kapazitäts-Summen-Zeile ────────────────────────────────────────────
     tbody += '<tr class="cap-row"><td class="staff-name" style="color:var(--text2);font-size:11px">Σ Kapazität (h)</td>';
     weeks.forEach(wk => {
         tbody += `<td>${Math.round((capacity_totals[wk] || 0) * 10) / 10}</td>`;
+    });
+    tbody += '</tr>';
+
+    // ── Liefertermin-Zeile ─────────────────────────────────────────────────
+    const istMap = ist_kw_map || {};
+    tbody += '<tr class="delivery-row"><td class="staff-name" style="color:var(--text2);font-size:11px;font-weight:600;">Liefertermin</td>';
+    weeks.forEach(wk => {
+        const projs = istMap[wk] || [];
+        if (projs.length === 0) {
+            tbody += '<td></td>';
+        } else {
+            const chips = projs.map(p => {
+                const color  = p.color_hexcode || '#555';
+                const txtCol = contrastColor(color);
+                return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">${esc(p.project_name)}</div>`;
+            }).join('');
+            tbody += `<td>${chips}</td>`;
+        }
     });
     tbody += '</tr>';
 
@@ -614,125 +547,40 @@ function renderMatrix() {
     bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
 }
 
+function renderDragSources() { }
 
-// ── Drag-Quellen rendern (Funktion ist jetzt leer, da D&D entfernt wurde) ─────
-function renderDragSources() {
-    const projList = document.getElementById('proj-drag-list');
-    if (projList) projList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
-    const taskList = document.getElementById('task-drag-list');
-    if (taskList) taskList.innerHTML = '<div class="text-dim" style="font-size:12px">Drag & Drop deaktiviert</div>';
-}
-
-// ── Drag & Drop Funktionen (deaktiviert) ───────────────────────────────────────
-function dragStart(e, type, id, name, color) { /* D&D entfernt */ }
-function cellDragOver(e) { /* D&D entfernt */ }
-function cellDrop(e, staff, roleId, weekKey) { /* D&D entfernt */ }
-
-// ── Klick-Zuweisung (deaktiviert) ───────────────────────────────────────────
+// ── Klick-Zuweisung (schreibgeschützt) ────────────────────────────────────────
 function cellClick(e, staff, roleId, weekKey) {
     if (e.target.classList.contains('remove-btn')) return;
     e.stopPropagation();
-    toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
-}
-
-function renderDropdownItems(itemsToRender) {
-    const dd = document.getElementById('cell-dropdown');
-    if (!dd) return;
-    dd.querySelectorAll('.cell-dropdown-item.active').forEach(item => item.classList.remove('active'));
-    dd.innerHTML = itemsToRender.map((it, index) =>
-        `<div class="cell-dropdown-item ${index === _activeDropdownItemIndex ? 'active' : ''}"
-        data-index="${index}">
-        <span style="width:10px;height:10px;border-radius:50%;background:${it.color};flex-shrink:0"></span>
-        <span>${esc(it.name)}</span>
-        <span class="text-dim" style="font-size:10px;margin-left:auto">${esc(it.sub)}</span>
-        </div>`
-    ).join('');
-    highlightActiveDropdownItem();
-}
-
-function handleDropdownKeydown(e) {
-    e.preventDefault();
-    console.log("Tastatureingaben für Dropdown in dieser Ansicht deaktiviert.");
-}
-
-function filterDropdownItems() {
-    if (_dropdownSearchTerm === '') {
-        _filteredDropdownItems = [..._dropdownItems];
-    } else {
-        _filteredDropdownItems = _dropdownItems.filter(item =>
-            item.name.toLowerCase().includes(_dropdownSearchTerm) ||
-            (item.sub && item.sub.toLowerCase().includes(_dropdownSearchTerm))
-        );
-    }
-    _activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1;
-    renderDropdownItems(_filteredDropdownItems);
-}
-
-function highlightActiveDropdownItem() {
-    const dd = document.getElementById('cell-dropdown');
-    if (!dd) return;
-    dd.querySelectorAll('.cell-dropdown-item').forEach(item => item.classList.remove('active'));
-    if (_activeDropdownItemIndex > -1 && _activeDropdownItemIndex < _filteredDropdownItems.length) {
-        const activeItemElement = dd.querySelector(`.cell-dropdown-item[data-index="${_activeDropdownItemIndex}"]`);
-        if (activeItemElement) {
-            activeItemElement.classList.add('active');
-            activeItemElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-    }
-}
-
-async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) {
-    e.stopPropagation();
-    toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
+    toast('Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'error');
 }
 
 function closeDropdown() {
     const dd = document.getElementById('cell-dropdown');
     if (dd) dd.style.display = 'none';
     openDropdownCell = null;
-    document.removeEventListener('keydown', handleDropdownKeydown);
-    _dropdownSearchTerm = '';
-    _activeDropdownItemIndex = -1;
-    _filteredDropdownItems = [];
 }
 
 document.addEventListener('click', (e) => {
     const dd = document.getElementById('cell-dropdown');
-    if (dd && dd.style.display === 'block' && !dd.contains(e.target) && !e.target.closest('.droptarget')) {
-        closeDropdown();
-    }
+    if (dd && dd.style.display === 'block' && !dd.contains(e.target)) closeDropdown();
 });
 
-// ── Zuweisung ausführen (deaktiviert) ────────────────────────────────────────────────────────
-async function doAssign(staff, roleId, weekKey, payload) {
-    toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
-    console.log("Assignment is disabled in this read-only view.");
+async function doAssign() {
+    toast('Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'error');
 }
-
-async function removePlanning(e, staff, weekKey, projectId, taskId) {
+async function removePlanning(e) {
     e.stopPropagation();
-    toast('Achtung: Planung kann in dieser Ansicht nicht entfernt werden (schreibgeschützt).', 'warning');
-    console.log("Removing planning is disabled in this read-only view.");
+    toast('Planung kann in dieser Ansicht nicht entfernt werden (schreibgeschützt).', 'error');
 }
+function openAssignModal() { toast('Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'error'); }
+function closeAssignModal() { document.getElementById('assign-modal')?.classList.remove('open'); }
+async function confirmAssign() { toast('Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'error'); }
+function highlightActiveDropdownItem() { }
+function renderDropdownItems() { }
 
-function openAssignModal(staff, staffRoles, weekKey) {
-    toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
-    console.log("Assign modal is disabled in this read-only view.");
-}
-
-function closeAssignModal() {
-    const modal = document.getElementById('assign-modal');
-    if (modal) modal.classList.remove('open');
-}
-
-async function confirmAssign() {
-    toast('Achtung: Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'warning');
-    console.log("Confirming assignment is disabled in this read-only view.");
-}
-
-// ── Projektstatus (entfernt) ─────────────────────────────────────────────
-
-// ── Hilfsfunktionen (unverändert) ────────────────────────────────────────────────────────────
+// ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 function contrastColor(hex) {
     if (!hex || hex.length < 7) return '#fff';
     const r = parseInt(hex.slice(1,3), 16);
@@ -748,29 +596,6 @@ function esc(s) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
-
-// ── Forecast-Logik im Frontend (deaktiviert) ───────────────────────────────────
-async function showForecast() {
-    toast('Achtung: Forecast-Funktion in dieser Ansicht deaktiviert.', 'warning');
-    const forecastChartContainer = document.getElementById('forecast-chart-container');
-    if (forecastChartContainer) forecastChartContainer.innerHTML = '<p class="text-dim">Forecast-Ansicht in diesem Modus deaktiviert.</p>';
-    openForecastModal();
-}
-
-function openForecastModal() {
-    const modal = document.getElementById('forecast-modal');
-    if (modal) {
-        modal.style.display = 'flex';
-    }
-}
-
-function closeForecastModal() {
-    const modal = document.getElementById('forecast-modal');
-    if (modal) {
-        modal.style.display = 'none';
-        document.getElementById('forecast-chart-container').innerHTML = '<p class="text-dim">Forecast-Ansicht in diesem Modus deaktiviert.</p>';
-    }
 }
 </script>
 {% endblock %}
