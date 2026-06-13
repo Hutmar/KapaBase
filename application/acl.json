@@ -16,5 +16,8 @@
   },
   "worked_hours": {
     "edit": ["localhost"]
+  },
+  "planning_variants": {
+    "edit": ["localhost"]
   }
 }

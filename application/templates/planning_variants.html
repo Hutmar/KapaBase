@@ -1,0 +1,230 @@
+{% extends "base.html" %}
+{% block title %}Planungsvarianten – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h1>Planungsvarianten</h1>
+    <div class="flex-gap">
+      <a href="/planning_status" target="_blank" class="btn btn-ghost">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+        Planungsstatus öffnen
+      </a>
+      {% if has_edit_rights %}
+      <button class="btn btn-primary" onclick="openModal()">+ Neue Variante</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <div style="overflow-x:auto">
+    <table id="variants-table">
+      <thead>
+        <tr>
+          <th onclick="setSort('variant_id')">ID ⇅</th>
+          <th onclick="setSort('variant_name')">Name ⇅</th>
+          <th onclick="setSort('is_active')">Status ⇅</th>
+          <th onclick="setSort('created_at')">Erstellt ⇅</th>
+          <th onclick="setSort('active_since')">Aktiviert seit ⇅</th>
+          <th style="width:200px"></th>
+        </tr>
+      </thead>
+      <tbody id="variants-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Neue / bearbeiten Modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal" style="width:min(440px,95vw)">
+    <div class="modal-title" id="modal-title">Neue Variante</div>
+    <div id="modal-alert"></div>
+    <div class="form-row">
+      <label>Name</label>
+      <input id="f-name" placeholder="z.B. Sprint 24 / Planung Q3">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveVariant()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
+let allVariants = [];
+let editingId   = null;
+let sortField   = 'created_at';
+let sortDir     = -1; // newest first
+
+function fmtDatetime(iso) {
+  if (!iso) return '–';
+  const d = new Date(iso);
+  if (isNaN(d)) return '–';
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadVariants() {
+  try {
+    allVariants = await api('GET', '/api/planning_variants/');
+    renderVariants();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+function setSort(field) {
+  if (sortField === field) sortDir *= -1;
+  else { sortField = field; sortDir = 1; }
+  renderVariants();
+}
+
+function renderVariants() {
+  const sorted = [...allVariants].sort((a, b) => {
+    let av = a[sortField], bv = b[sortField];
+    if (av === null || av === undefined) av = '';
+    if (bv === null || bv === undefined) bv = '';
+    if (typeof av === 'boolean') { av = av ? 1 : 0; bv = bv ? 1 : 0; }
+    if (typeof av === 'string' && typeof bv === 'string') return av.localeCompare(bv) * sortDir;
+    return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+  });
+
+  document.getElementById('variants-body').innerHTML = sorted.map(v => {
+    const isActive = v.is_active;
+    const rowBg    = isActive ? 'background:rgba(46,204,113,0.06)' : '';
+
+    const statusBadge = isActive
+      ? `<span class="badge status-green" style="font-size:11px">✓ Aktiv</span>`
+      : `<span class="badge" style="background:rgba(136,146,170,0.15);color:var(--text2);font-size:11px">Inaktiv</span>`;
+
+    const planningLink = `
+      <a href="/planning?variant_id=${v.variant_id}" target="_blank"
+         class="btn btn-ghost btn-xs" title="Planung mit dieser Variante öffnen">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+          <polyline points="15 3 21 3 21 9"/>
+          <line x1="10" y1="14" x2="21" y2="3"/>
+        </svg>
+        Planung
+      </a>`;
+
+    const editBtn = hasEditRights
+      ? `<button class="btn btn-ghost btn-xs" onclick="openModal(${v.variant_id})" title="Name bearbeiten">✎</button>`
+      : '';
+
+    const activateBtn = (hasEditRights && !isActive)
+      ? `<button class="btn btn-ghost btn-xs" onclick="activateVariant(${v.variant_id})"
+           style="color:var(--accent2);border-color:rgba(46,204,113,0.3)"
+           title="Als aktive Variante setzen">⚡ Aktivieren</button>`
+      : '';
+
+    const deleteBtn = (hasEditRights && !isActive)
+      ? `<button class="btn btn-danger btn-xs" onclick="deleteVariant(${v.variant_id})" title="Variante löschen">✕</button>`
+      : '';
+
+    return `
+<tr style="${rowBg}">
+  <td class="text-mono" style="color:var(--text2)">#${v.variant_id}</td>
+  <td>
+    ${isActive
+      ? `<strong>${v.variant_name || '<span class="text-dim">–</span>'}</strong>`
+      : (v.variant_name || '<span class="text-dim">–</span>')}
+  </td>
+  <td>${statusBadge}</td>
+  <td class="text-dim text-mono" style="font-size:12px">${fmtDatetime(v.created_at)}</td>
+  <td class="text-dim text-mono" style="font-size:12px">${fmtDatetime(v.active_since)}</td>
+  <td>
+    <div class="flex-gap" style="justify-content:flex-end">
+      ${planningLink}
+      ${editBtn}
+      ${activateBtn}
+      ${deleteBtn}
+    </div>
+  </td>
+</tr>`;
+  }).join('');
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────────
+function openModal(id = null) {
+  editingId = id;
+  document.getElementById('modal-alert').innerHTML = '';
+  document.getElementById('modal-title').textContent = id ? 'Name bearbeiten' : 'Neue Variante';
+  if (id) {
+    const v = allVariants.find(x => x.variant_id === id);
+    document.getElementById('f-name').value = v ? (v.variant_name || '') : '';
+  } else {
+    document.getElementById('f-name').value = '';
+  }
+  document.getElementById('modal-backdrop').classList.add('open');
+  setTimeout(() => document.getElementById('f-name').focus(), 50);
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveVariant() {
+  const name    = document.getElementById('f-name').value.trim() || null;
+  const alertEl = document.getElementById('modal-alert');
+  try {
+    if (editingId) {
+      await api('PUT', `/api/planning_variants/${editingId}`, { variant_name: name });
+    } else {
+      await api('POST', '/api/planning_variants/', { variant_name: name });
+    }
+    closeModal();
+    toast('Gespeichert');
+    loadVariants();
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+  }
+}
+
+// ── Aktivieren ─────────────────────────────────────────────────────────────────
+async function activateVariant(id) {
+  const v = allVariants.find(x => x.variant_id === id);
+  const name = v?.variant_name ? `"${v.variant_name}"` : `#${id}`;
+  if (!confirm(`Variante ${name} als aktive Variante setzen?\nDie bisherige aktive Variante wird deaktiviert.`)) return;
+  try {
+    await api('POST', `/api/planning_variants/${id}/activate`);
+    toast('Variante aktiviert');
+    loadVariants();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// ── Löschen ────────────────────────────────────────────────────────────────────
+async function deleteVariant(id) {
+  const v = allVariants.find(x => x.variant_id === id);
+  const name = v?.variant_name ? `"${v.variant_name}"` : `#${id}`;
+  if (!confirm(`Variante ${name} wirklich löschen?\nAlle Planungseinträge dieser Variante werden ebenfalls gelöscht.`)) return;
+  try {
+    await api('DELETE', `/api/planning_variants/${id}`);
+    toast('Variante gelöscht');
+    loadVariants();
+  } catch(e) {
+    toast(e.message, 'error');
+  }
+}
+
+// Enter im Modal = Speichern
+document.getElementById('f-name').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveVariant();
+});
+
+document.addEventListener('DOMContentLoaded', loadVariants);
+</script>
+{% endblock %}

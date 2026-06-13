@@ -15,6 +15,7 @@ from typing import Optional
 # ── Sub-Router importieren ─────────────────────────────────────────────────────
 from routers import staff, projects, tasks, planning, absence, charts, worked_hours, forecast
 from routers import sync as sync_router
+from routers import planning_variants
 from acl import has_permission
 
 # ── App-Instanz ────────────────────────────────────────────────────────────────
@@ -25,15 +26,16 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 
 # ── Router einbinden ───────────────────────────────────────────────────────────
-app.include_router(staff.router,        prefix="/api/staff",        tags=["Staff"])
-app.include_router(projects.router,     prefix="/api/projects",     tags=["Projects"])
-app.include_router(tasks.router,        prefix="/api/tasks",        tags=["Tasks"])
-app.include_router(planning.router,     prefix="/api/planning",     tags=["Planning"])
-app.include_router(absence.router,      prefix="/api/absence",      tags=["Absence"])
-app.include_router(charts.router,       prefix="/api/charts",       tags=["Charts"])
-app.include_router(worked_hours.router, prefix="/api/worked_hours", tags=["Worked Hours"])
-app.include_router(forecast.router,     prefix="/api/forecast",     tags=["Forecast"])
-app.include_router(sync_router.router,  prefix="/api/sync",         tags=["Sync"])
+app.include_router(staff.router,                    prefix="/api/staff",               tags=["Staff"])
+app.include_router(projects.router,                 prefix="/api/projects",            tags=["Projects"])
+app.include_router(tasks.router,                    prefix="/api/tasks",               tags=["Tasks"])
+app.include_router(planning.router,                 prefix="/api/planning",            tags=["Planning"])
+app.include_router(absence.router,                  prefix="/api/absence",             tags=["Absence"])
+app.include_router(charts.router,                   prefix="/api/charts",              tags=["Charts"])
+app.include_router(worked_hours.router,             prefix="/api/worked_hours",        tags=["Worked Hours"])
+app.include_router(forecast.router,                 prefix="/api/forecast",            tags=["Forecast"])
+app.include_router(sync_router.router,              prefix="/api/sync",                tags=["Sync"])
+app.include_router(planning_variants.router, prefix="/api/planning_variants",   tags=["Planning Variants"])
 
 # ── Frontend HTML Seiten ───────────────────────────────────────────────────────
 
@@ -65,6 +67,11 @@ async def page_tasks(request: Request):
 async def page_planning(request: Request):
     editable = has_permission(request, "planning", "edit")
     return templates.TemplateResponse("planning.html", {"request": request, "has_edit_rights": editable})
+
+@app.get("/planning_variants", response_class=HTMLResponse)
+async def page_planning_variants(request: Request):
+    editable = has_permission(request, "planning_variants", "edit")
+    return templates.TemplateResponse("planning_variants.html", {"request": request, "has_edit_rights": editable})
 
 @app.get("/worked_hours/{project_id}", response_class=HTMLResponse)
 async def page_worked_hours(request: Request, project_id: int):
