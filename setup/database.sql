@@ -64,17 +64,31 @@ create table worked_hours (
 	test_hours int default 0
 );
 
+create table planning_variant (
+	variant_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	created_at TIMESTAMPTZ DEFAULT NOW(),
+	variant_name varchar(255) default null,
+	is_active BOOLEAN NOT NULL DEFAULT false,
+	active_since TIMESTAMPTZ default null
+);
+
+CREATE UNIQUE INDEX idx_nur_ein_aktiver_datensatz 
+ON planning_variant (is_active) 
+WHERE is_active = true;
+
 create table planning(
+	planning_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
 	task_id int default null REFERENCES tasks(task_id),
 	project_id int default null REFERENCES project(project_id),
 	staff varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
 	role_id int not null REFERENCES roles(role_id),
+	variant_id int not null REFERENCES planning_variant(variant_id),
 	start_date date not null,
 	end_date date not null,
 	CONSTRAINT chk_task_xor_project CHECK (
         (task_id IS NULL) != (project_id IS NULL)
     ),
     CONSTRAINT uq_planning UNIQUE NULLS NOT DISTINCT (
-        task_id, project_id, staff, role_id, start_date, end_date
+        task_id, project_id, staff, role_id, variant_id, start_date, end_date
     )
 );
