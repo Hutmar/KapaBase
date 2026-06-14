@@ -58,7 +58,6 @@ def _get_active_variant_id(cur) -> int:
 def _resolve_variant_id(cur, variant_id: Optional[int]) -> int:
     """Gibt variant_id zurück – entweder die übergebene oder die aktive."""
     if variant_id is not None:
-        # Prüfen ob diese Variante existiert
         cur.execute("SELECT variant_id FROM planning_variant WHERE variant_id = %s", (variant_id,))
         if not cur.fetchone():
             raise HTTPException(status_code=404,
@@ -161,7 +160,6 @@ def get_planning(
         # ── Variante auflösen ────────────────────────────────────────────────
         resolved_variant_id = _resolve_variant_id(cur, variant_id)
 
-        # Varianten-Info für die Antwort
         cur.execute("SELECT variant_id, variant_name, is_active, created_at FROM planning_variant WHERE variant_id = %s",
                     (resolved_variant_id,))
         variant_info = dict(cur.fetchone())
@@ -226,6 +224,12 @@ def get_planning(
 
         all_relevant_project_ids = list(effective_project_ids_set.union(task_project_ids_set))
 
+        # ── Filter-Flag: wurde mit Projekt- oder Task-Filter aufgerufen? ─────
+        # Steuert, welche Projekte in der ist_kw_map (Liefertermin-Zeile) erscheinen.
+        has_any_filter = bool(effective_project_ids_set or effective_task_ids_set)
+        # Vollständige Menge der Projekt-IDs für die ist_kw_map-Einschränkung
+        filtered_status_project_ids: Set[int] = effective_project_ids_set.union(task_project_ids_set)
+
         # ── Zeitbereich aus Projektdaten ─────────────────────────────────────
         range_query_sql = """
             SELECT MIN(start_date) AS min_start,
@@ -263,10 +267,39 @@ def get_planning(
         else:
             start_date = cur_monday
 
-        if range_row and range_row["max_due"]:
-            md     = range_row["max_due"]
-            md_iso = md.isocalendar()
-            end_date = date.fromisocalendar(md_iso[0], md_iso[1], 7)
+        # end_date: Maximum aus project.due_date UND planning.end_date der
+        # gefilterten Projekte/Tasks, damit alle Planungen und Liefertermine
+        # im sichtbaren Zeitbereich liegen. +1 KW Puffer für den Liefertermin-Chip
+        # (Liefertermin = KW *nach* letzter Planungs-KW).
+        max_due = range_row["max_due"] if (range_row and range_row["max_due"]) else None
+
+        if all_relevant_project_ids or effective_task_ids:
+            plan_end_sql = """
+                SELECT MAX(pl.end_date) AS max_plan_end
+                FROM planning pl
+                LEFT JOIN tasks t ON t.task_id = pl.task_id
+                WHERE pl.variant_id = %s
+            """
+            plan_end_params: list = [resolved_variant_id]
+            plan_end_parts: list = []
+            if effective_task_ids:
+                plan_end_parts.append("pl.task_id = ANY(%s)")
+                plan_end_params.append(effective_task_ids)
+            if effective_project_ids:
+                plan_end_parts.append("(pl.project_id = ANY(%s) OR t.project_id = ANY(%s))")
+                plan_end_params.extend([effective_project_ids, effective_project_ids])
+            if plan_end_parts:
+                plan_end_sql += " AND (" + " OR ".join(plan_end_parts) + ")"
+            cur.execute(plan_end_sql, plan_end_params)
+            plan_end_row = cur.fetchone()
+            max_plan_end = plan_end_row["max_plan_end"] if plan_end_row else None
+            if max_plan_end:
+                max_due = max(max_due, max_plan_end) if max_due else max_plan_end
+
+        if max_due:
+            md_iso   = max_due.isocalendar()
+            # +1 KW Puffer damit Liefertermin-KW im sichtbaren Bereich liegt
+            end_date = date.fromisocalendar(md_iso[0], md_iso[1], 7) + timedelta(weeks=1)
         else:
             end_date = start_date + timedelta(weeks=12)
 
@@ -456,9 +489,8 @@ def get_planning(
             plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(entry)
 
         # ── Ist-Liefertermin je KW (für die Liefertermin-Zeile) ──────────────
-        # Berechnung analog zu project_planning_status, aber inline hier,
-        # damit keine zweite DB-Verbindung nötig ist.
-        # Wir brauchen dafür: plan_rows (variant-gefiltert), worked_hours, projects
+        # Wenn mit Projektfilter aufgerufen: nur die gefilterten Projekte berücksichtigen.
+        # Ohne Filter: alle aktiven Projekte wie bisher.
         cur.execute("""
             SELECT pl.project_id,
                    pl.staff, pl.start_date, pl.end_date,
@@ -479,14 +511,24 @@ def get_planning(
         """)
         worked_map = {r["project_id"]: r for r in cur.fetchall()}
 
-        cur.execute("""
+        # Projekte für ist_kw_map:
+        # – Mit Filter: nur die explizit angefragten Projekt-IDs
+        # – Ohne Filter: alle aktiven Projekte
+        status_project_sql = """
             SELECT p.project_id, p.project_name, p.color_hexcode,
                    p.impl_hours AS plan_impl, p.test_hours AS plan_test,
                    p.due_date
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
             AND p.project_type = 'Project'
-        """)
+        """
+        status_project_params = []
+        if has_any_filter:
+            # Nur die gefilterten Projekte
+            status_project_sql += " AND p.project_id = ANY(%s)"
+            status_project_params.append(list(filtered_status_project_ids))
+
+        cur.execute(status_project_sql, status_project_params)
         projects_for_status = {r["project_id"]: dict(r) for r in cur.fetchall()}
 
         cur.execute("""
@@ -506,6 +548,11 @@ def get_planning(
 
     for pr in plan_rows_status:
         pid = pr["project_id"]
+
+        # Wenn Projektfilter aktiv: nur die gefilterten Projekte auswerten
+        if has_any_filter and pid not in filtered_status_project_ids:
+            continue
+
         is_outdated = (
             pid in max_worked_day_status
             and max_worked_day_status[pid] > pr["end_date"]
@@ -560,7 +607,7 @@ def get_planning(
         "filter_title_parts": filter_title_parts,
         "variant_info":       variant_info,
         "resolved_variant_id": resolved_variant_id,
-        "ist_kw_map":         ist_kw_map,  # NEU: für Liefertermin-Zeile
+        "ist_kw_map":         ist_kw_map,
     }
 
 # ── POST /assign ───────────────────────────────────────────────────────────────
@@ -595,7 +642,6 @@ def assign_planning(data: PlanningEntry):
     with get_cursor(commit=True) as cur:
         resolved_variant_id = _resolve_variant_id(cur, data.variant_id)
 
-        # Prüfen ob für diesen Mitarbeiter + Variante in dieser KW bereits ein Eintrag existiert
         cur.execute("""
             SELECT planning_id, role_id, project_id, task_id FROM planning
             WHERE staff = %s AND start_date = %s AND variant_id = %s
@@ -606,7 +652,6 @@ def assign_planning(data: PlanningEntry):
             if existing["role_id"] != data.role_id:
                 raise HTTPException(409,
                     "Mitarbeiter ist in dieser Woche bereits als andere Rolle eingeplant")
-            # Gleiche Rolle → alten Eintrag ersetzen
             cur.execute("""
                 DELETE FROM planning WHERE planning_id = %s
             """, (existing["planning_id"],))
@@ -634,7 +679,6 @@ def remove_planning(data: PlanningDelete):
     with get_cursor(commit=True) as cur:
 
         if data.planning_id is not None:
-            # Direktlöschung per Primary Key
             cur.execute("DELETE FROM planning WHERE planning_id = %s", (data.planning_id,))
         else:
             if not data.staff or not data.calendar_week:
@@ -668,7 +712,6 @@ def project_planning_status(variant_id: Optional[int] = None):
 
         resolved_variant_id = _resolve_variant_id(cur, variant_id)
 
-        # Projekte laden
         cur.execute("""
             SELECT p.project_id, p.project_name, p.customer,
                    p.target_hours, p.impl_hours AS plan_impl,
@@ -681,7 +724,6 @@ def project_planning_status(variant_id: Optional[int] = None):
         """)
         projects = cur.fetchall()
 
-        # Geleistete Stunden je Projekt
         cur.execute("""
             SELECT project_id,
                    COALESCE(SUM(impl_hours),0) AS worked_impl,
@@ -690,7 +732,6 @@ def project_planning_status(variant_id: Optional[int] = None):
         """)
         worked = {r["project_id"]: r for r in cur.fetchall()}
 
-        # Planungseinträge (nur aktive Variante)
         cur.execute("""
             SELECT pl.project_id, pl.task_id,
                    pl.staff, pl.start_date, pl.end_date,

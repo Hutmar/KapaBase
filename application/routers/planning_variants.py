@@ -5,6 +5,7 @@ routers/planning_variants.py – Planungsvarianten (Tabelle: planning_variant)
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from datetime import date
 from db import get_cursor
 
 router = APIRouter()
@@ -12,6 +13,7 @@ router = APIRouter()
 
 class VariantCreate(BaseModel):
     variant_name: Optional[str] = None
+    copy_from_variant_id: Optional[int] = None   # NEU: Quell-Variante
 
 
 class VariantUpdate(BaseModel):
@@ -32,14 +34,53 @@ def list_variants():
 
 @router.post("/", status_code=201)
 def create_variant(data: VariantCreate):
-    """Neue Planungsvariante anlegen."""
+    """
+    Neue Planungsvariante anlegen.
+    Falls copy_from_variant_id angegeben, werden alle Planungseinträge der
+    Quell-Variante in die neue Variante kopiert.
+    """
     with get_cursor(commit=True) as cur:
+
+        # Quell-Variante prüfen (falls angegeben)
+        if data.copy_from_variant_id is not None:
+            cur.execute(
+                "SELECT variant_id FROM planning_variant WHERE variant_id = %s",
+                (data.copy_from_variant_id,)
+            )
+            if not cur.fetchone():
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Quell-Variante {data.copy_from_variant_id} nicht gefunden."
+                )
+
+        # Neue Variante anlegen
         cur.execute("""
             INSERT INTO planning_variant (variant_name, is_active)
             VALUES (%s, FALSE)
             RETURNING variant_id
         """, (data.variant_name,))
-        return {"variant_id": cur.fetchone()["variant_id"]}
+        new_variant_id = cur.fetchone()["variant_id"]
+
+        copied_rows = 0
+
+        # Planungseinträge der Quell-Variante kopieren (nur ab aktuelle KW)
+        if data.copy_from_variant_id is not None:
+            today = date.today()
+            iso   = today.isocalendar()
+            current_week_monday = date.fromisocalendar(iso[0], iso[1], 1)
+
+            cur.execute("""
+                INSERT INTO planning
+                    (task_id, project_id, staff, role_id, variant_id, start_date, end_date)
+                SELECT
+                    task_id, project_id, staff, role_id, %s, start_date, end_date
+                FROM planning
+                WHERE variant_id = %s
+                  AND start_date >= %s
+            """, (new_variant_id, data.copy_from_variant_id, current_week_monday))
+            copied_rows = cur.rowcount
+
+        return {"variant_id": new_variant_id, "copied_rows": copied_rows}
 
 
 @router.put("/{variant_id}")
@@ -66,7 +107,7 @@ def activate_variant(variant_id: int):
         if not cur.fetchone():
             raise HTTPException(status_code=404, detail="Variante nicht gefunden")
 
-        cur.execute("UPDATE planning_variant SET is_active = FALSE")
+        cur.execute("UPDATE planning_variant SET is_active = FALSE, active_since = NULL")
         cur.execute("""
             UPDATE planning_variant
             SET is_active = TRUE, active_since = NOW()
@@ -78,7 +119,7 @@ def activate_variant(variant_id: int):
 @router.delete("/{variant_id}")
 def delete_variant(variant_id: int):
     """
-    Variante löschen (nur inaktive). 
+    Variante löschen (nur inaktive).
     Löscht zuerst alle planning-Einträge dieser Variante.
     """
     with get_cursor(commit=True) as cur:

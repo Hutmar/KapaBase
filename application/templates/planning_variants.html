@@ -40,13 +40,28 @@
 
 <!-- Neue / bearbeiten Modal -->
 <div class="modal-backdrop" id="modal-backdrop">
-  <div class="modal" style="width:min(440px,95vw)">
+  <div class="modal" style="width:min(480px,95vw)">
     <div class="modal-title" id="modal-title">Neue Variante</div>
     <div id="modal-alert"></div>
+
     <div class="form-row">
       <label>Name</label>
       <input id="f-name" placeholder="z.B. Sprint 24 / Planung Q3">
     </div>
+
+    <!-- NEU: Dropdown Quell-Variante -->
+    <div class="form-row" style="align-items:flex-start">
+      <label style="padding-top:6px">Basierend auf</label>
+      <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+        <select id="f-copy-from">
+          <option value="">– keine (leere Variante) –</option>
+        </select>
+        <div id="copy-hint" class="text-dim" style="font-size:11px;display:none">
+          Alle Planungseinträge der gewählten Variante werden in die neue Variante kopiert.
+        </div>
+      </div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveVariant()">Speichern</button>
@@ -78,9 +93,24 @@ async function loadVariants() {
   try {
     allVariants = await api('GET', '/api/planning_variants/');
     renderVariants();
+    populateCopyFromDropdown();
   } catch(e) {
     toast(e.message, 'error');
   }
+}
+
+function populateCopyFromDropdown() {
+  const sel = document.getElementById('f-copy-from');
+  // Erste Option (keine) beibehalten, Rest neu aufbauen
+  sel.innerHTML = '<option value="">– keine (leere Variante) –</option>';
+  allVariants.forEach(v => {
+    const name   = v.variant_name || `Variante #${v.variant_id}`;
+    const active = v.is_active ? ' (Aktiv)' : '';
+    const opt    = document.createElement('option');
+    opt.value       = v.variant_id;
+    opt.textContent = `#${v.variant_id} – ${name}${active}`;
+    sel.appendChild(opt);
+  });
 }
 
 function setSort(field) {
@@ -161,12 +191,24 @@ function openModal(id = null) {
   editingId = id;
   document.getElementById('modal-alert').innerHTML = '';
   document.getElementById('modal-title').textContent = id ? 'Name bearbeiten' : 'Neue Variante';
+
+  // Quell-Variante Dropdown nur beim Neuanlegen sichtbar
+  const copyRow  = document.getElementById('f-copy-from').closest('.form-row');
+  const copyHint = document.getElementById('copy-hint');
   if (id) {
+    // Bearbeiten: Quell-Variante ausblenden
+    copyRow.style.display = 'none';
+    copyHint.style.display = 'none';
     const v = allVariants.find(x => x.variant_id === id);
     document.getElementById('f-name').value = v ? (v.variant_name || '') : '';
   } else {
+    // Neuanlegen: Quell-Variante einblenden, Reset
+    copyRow.style.display = '';
+    copyHint.style.display = 'none';
     document.getElementById('f-name').value = '';
+    document.getElementById('f-copy-from').value = '';
   }
+
   document.getElementById('modal-backdrop').classList.add('open');
   setTimeout(() => document.getElementById('f-name').focus(), 50);
 }
@@ -175,17 +217,34 @@ function closeModal() {
   document.getElementById('modal-backdrop').classList.remove('open');
 }
 
+// Hinweis einblenden wenn Quell-Variante gewählt
+document.getElementById('f-copy-from').addEventListener('change', function() {
+  document.getElementById('copy-hint').style.display = this.value ? 'block' : 'none';
+});
+
 async function saveVariant() {
-  const name    = document.getElementById('f-name').value.trim() || null;
-  const alertEl = document.getElementById('modal-alert');
+  const alertEl       = document.getElementById('modal-alert');
+  const name          = document.getElementById('f-name').value.trim() || null;
+  const copyFromRaw   = document.getElementById('f-copy-from').value;
+  const copyFromId    = copyFromRaw ? parseInt(copyFromRaw) : null;
+
   try {
     if (editingId) {
+      // Nur umbenennen
       await api('PUT', `/api/planning_variants/${editingId}`, { variant_name: name });
+      toast('Gespeichert');
     } else {
-      await api('POST', '/api/planning_variants/', { variant_name: name });
+      // Neuanlegen (mit optionalem Kopieren)
+      const result = await api('POST', '/api/planning_variants/', {
+        variant_name:         name,
+        copy_from_variant_id: copyFromId,
+      });
+      const msg = copyFromId
+        ? `Variante angelegt – ${result.copied_rows} Planungseinträge kopiert.`
+        : 'Variante angelegt.';
+      toast(msg);
     }
     closeModal();
-    toast('Gespeichert');
     loadVariants();
   } catch(e) {
     alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
@@ -220,7 +279,7 @@ async function deleteVariant(id) {
   }
 }
 
-// Enter im Modal = Speichern
+// Enter im Namensfeld = Speichern
 document.getElementById('f-name').addEventListener('keydown', e => {
   if (e.key === 'Enter') saveVariant();
 });
