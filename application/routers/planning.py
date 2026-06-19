@@ -72,6 +72,11 @@ def _week_bounds(week_key: str):
     friday = monday + timedelta(days=4)
     return monday, friday
 
+def _current_week_key() -> str:
+    """Gibt den Schlüssel ('YYYY-WNN') der aktuellen Kalenderwoche zurück."""
+    iso = date.today().isocalendar()
+    return f"{iso[0]}-W{iso[1]:02d}"
+
 def _absent_workdays_in_week(shortname: str, week_key: str,
                              absences: list, at_hols: Set[date]) -> int:
     """Anzahl der Arbeitstage in der KW, an denen der MA abwesend ist."""
@@ -503,6 +508,25 @@ def get_planning(
         """, (resolved_variant_id,))
         plan_rows_status = [dict(r) for r in cur.fetchall()]
 
+        # Abwesenheiten für den vollen Zeitraum der Status-Planungen laden.
+        # Bug-Fix: vorher wurde hier _effective_hours_in_week() mit einer leeren
+        # Abwesenheitsliste aufgerufen → Stunden wurden überschätzt, wodurch in
+        # der Liefertermin-Zeile Projekte auftauchten, die laut Projektstatus-
+        # Tabelle (die Abwesenheiten korrekt berücksichtigt) noch >15h offen hatten.
+        if plan_rows_status:
+            pstatus_staff = list({r["staff"] for r in plan_rows_status})
+            pstatus_min_d = min(r["start_date"] for r in plan_rows_status)
+            pstatus_max_d = max(r["end_date"]   for r in plan_rows_status)
+            cur.execute("""
+                SELECT shortname, absence_from, absence_to
+                FROM absence
+                WHERE shortname = ANY(%s)
+                AND absence_to >= %s AND absence_from <= %s
+            """, (pstatus_staff, pstatus_min_d, pstatus_max_d))
+            absences_status = [dict(a) for a in cur.fetchall()]
+        else:
+            absences_status = []
+
         cur.execute("""
             SELECT project_id,
                    COALESCE(SUM(impl_hours),0) AS worked_impl,
@@ -531,12 +555,6 @@ def get_planning(
         cur.execute(status_project_sql, status_project_params)
         projects_for_status = {r["project_id"]: dict(r) for r in cur.fetchall()}
 
-        cur.execute("""
-            SELECT project_id, MAX(day) AS max_day
-            FROM worked_hours GROUP BY project_id
-        """)
-        max_worked_day_status = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
-
     # ── Ist-Liefertermin berechnen (außerhalb des Cursor-Blocks) ─────────────
     at_hols_status = _build_at_hols(
         min((r["start_date"] for r in plan_rows_status), default=date.today()),
@@ -553,17 +571,20 @@ def get_planning(
         if has_any_filter and pid not in filtered_status_project_ids:
             continue
 
-        is_outdated = (
-            pid in max_worked_day_status
-            and max_worked_day_status[pid] > pr["end_date"]
-        )
-        if is_outdated:
+        # Planungen, deren KW vollständig vor dem letzten erfassten
+        # worked_hours-Tag des Projekts liegt, gelten als bereits durch die
+        # Ist-Stunden abgedeckt und fließen NICHT mehr zusätzlich in die
+        # Liefertermin-Berechnung ein (sonst würden sie doppelt gezählt:
+        # einmal als Ist-Stunden, einmal als offene Planung). Konsistent
+        # mit /project_status.
+        last_worked_day = max_worked_day.get(pid)
+        if last_worked_day is not None and pr["end_date"] <= last_worked_day:
             continue
 
         wk = iso_week_key(pr["start_date"])
         h  = _effective_hours_in_week(
             pr["staff"], float(pr["hours_per_day"]),
-            wk, [], at_hols_status)
+            wk, absences_status, at_hols_status)
 
         plan_agg_status.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
         role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
@@ -768,39 +789,69 @@ def project_planning_status(variant_id: Optional[int] = None):
 
     at_hols = _build_at_hols(min_d, max_d + timedelta(weeks=12))
 
-    plan_agg:     dict = {}
-    last_end_map: dict = {}
+    # ── Planungen aufteilen ──────────────────────────────────────────────────
+    # 1) Formel-relevanter Split: offen = soll − Ist-Stunden (worked_hours) −
+    #    Planung NACH dem letzten erfassten Ist-Stunden-Eintrag des Projekts.
+    #    Planungen mit end_date <= letztem worked_hours-Datum gelten als
+    #    bereits durch die tatsächlich erfassten Stunden abgedeckt und dürfen
+    #    NICHT nochmals von den Sollstunden abgezogen werden.
+    #    plan_cur = Planungen NACH dem letzten Ist-Eintrag → fließt in "offen" ein.
+    #
+    # 2) Rein informativer Split für den Tooltip (Plausibilisierung): Planungen
+    #    nach Kalenderwoche aufgeteilt in "vor aktueller KW" / "ab aktueller
+    #    KW" – unabhängig vom letzten worked_hours-Datum. Dieser Split hat
+    #    KEINEN Einfluss auf die Reststunden-Berechnung.
+    today_iso         = date.today().isocalendar()
+    current_week_key  = f"{today_iso[0]}-W{today_iso[1]:02d}"
+
+    plan_cur:          dict = {}   # Formel-relevant (nach letztem Ist-Eintrag)
+    plan_calendar_prev: dict = {}  # nur Tooltip: vor aktueller KW
+    plan_calendar_cur:  dict = {}  # nur Tooltip: ab aktueller KW
+    last_end_map:      dict = {}
 
     for pr in plan_rows:
         pid = pr["project_id"]
+        wk  = iso_week_key(pr["start_date"])
+        h   = _effective_hours_in_week(
+            pr["staff"], float(pr["hours_per_day"]),
+            wk, all_absences, at_hols)
+
+        role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
+
+        # ── Tooltip-Split nach Kalenderwoche ──────────────────────────────
+        if wk < current_week_key:
+            plan_calendar_prev.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+            plan_calendar_prev[pid][role_key] += h
+        else:
+            plan_calendar_cur.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+            plan_calendar_cur[pid][role_key] += h
+
+        # ── Formel-Split nach letztem Ist-Eintrag ─────────────────────────
         is_outdated = (
             pid in max_worked_day_status
             and max_worked_day_status[pid] > pr["end_date"]
         )
-        if is_outdated:
-            continue
+        if not is_outdated:
+            plan_cur.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+            plan_cur[pid][role_key] += h
 
-        wk = iso_week_key(pr["start_date"])
-        h  = _effective_hours_in_week(
-            pr["staff"], float(pr["hours_per_day"]),
-            wk, all_absences, at_hols)
-
-        plan_agg.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
-        role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
-        plan_agg[pid][role_key] += h
-
-        prev_end_date = last_end_map.get(pid)
-        if prev_end_date is None or pr["end_date"] > prev_end_date:
-            last_end_map[pid] = pr["end_date"]
+            prev_end_date = last_end_map.get(pid)
+            if prev_end_date is None or pr["end_date"] > prev_end_date:
+                last_end_map[pid] = pr["end_date"]
 
     result = []
     for p in projects:
         pid = p["project_id"]
         w   = worked.get(pid, {"worked_impl": 0, "worked_test": 0})
-        pa  = plan_agg.get(pid, {"Developer": 0.0, "Tester": 0.0})
+        pc  = plan_cur.get(pid, {"Developer": 0.0, "Tester": 0.0})
+        cwp = plan_calendar_prev.get(pid, {"Developer": 0.0, "Tester": 0.0})
+        cwc = plan_calendar_cur.get(pid, {"Developer": 0.0, "Tester": 0.0})
 
-        remaining_impl = p["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
-        remaining_test = p["plan_test"] - float(w["worked_test"]) - pa["Tester"]
+        done_impl = float(w["worked_impl"])
+        done_test = float(w["worked_test"])
+
+        remaining_impl = p["plan_impl"] - done_impl - pc["Developer"]
+        remaining_test = p["plan_test"] - done_test - pc["Tester"]
         diff           = remaining_impl + remaining_test
 
         restaufwand = (
@@ -841,6 +892,18 @@ def project_planning_status(variant_id: Optional[int] = None):
             "remaining_test":  remaining_test,
             "remaining_hours": diff,
             "status_color":    status_color,
+            # ── Detailwerte zur Plausibilisierung (Tooltip im Frontend) ─────
+            # planned_prev/cur = NUR informativ, Split nach Kalenderwoche
+            # (vor/ab aktueller KW) – unabhängig von der "offen"-Formel oben,
+            # die stattdessen Planungen nach letztem Ist-Eintrag aufteilt.
+            "soll_impl":         p["plan_impl"],
+            "soll_test":         p["plan_test"],
+            "done_impl":         done_impl,
+            "done_test":         done_test,
+            "planned_prev_impl": cwp["Developer"],
+            "planned_prev_test": cwp["Tester"],
+            "planned_cur_impl":  cwc["Developer"],
+            "planned_cur_test":  cwc["Tester"],
         })
 
     return result

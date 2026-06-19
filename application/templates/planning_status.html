@@ -171,14 +171,14 @@
 .delivery-chip {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    text-align: left;
     border-radius: 3px;
     padding: 2px 6px;
     font-size: 10px;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
-    text-overflow: ellipsis;
     max-width: 82px;
     height: 22px;
     margin: 1px;
@@ -529,7 +529,9 @@ function renderMatrix() {
             const chips = projs.map(p => {
                 const color  = p.color_hexcode || '#555';
                 const txtCol = contrastColor(color);
-                return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">${esc(p.project_name)}</div>`;
+                return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${esc(p.project_name)}</span>
+                </div>`;
             }).join('');
             tbody += `<td>${chips}</td>`;
         }

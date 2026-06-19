@@ -184,14 +184,14 @@ text-align: left;
 .delivery-chip {
 display: inline-flex;
 align-items: center;
-justify-content: center;
+justify-content: flex-start;
+text-align: left;
 border-radius: 3px;
 padding: 2px 6px;
 font-size: 10px;
 font-weight: 600;
 white-space: nowrap;
 overflow: hidden;
-text-overflow: ellipsis;
 max-width: 82px;
 height: 22px;
 margin: 1px;
@@ -838,7 +838,9 @@ weeks.forEach(wk => {
     const chips = projs.map(p => {
       const color  = p.color_hexcode || '#555';
       const txtCol = contrastColor(color);
-      return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">${esc(p.project_name)}</div>`;
+      return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${esc(p.project_name)}</span>
+      </div>`;
     }).join('');
     tbody += `<td>${chips}</td>`;
   }
@@ -1019,16 +1021,23 @@ try {
   await api('POST', '/api/planning/assign', body);
   let message = `Zugewiesen: ${payload.name}`;
   if (payload.type === 'project' && payload.id) {
-    const updatedProjectStatuses = await loadProjectStatus(payload.id);
+    // silent: true → die Detail-Tabelle wird zwar neu geladen, aber die
+    // "nahezu abgedeckt"-Meldung von filterProjectStatus() wird hier
+    // unterdrückt, da wir unten EINE kombinierte Meldung anzeigen.
+    // (Vorher wurde diese Meldung von der nachfolgenden toast(message)
+    // sofort wieder überschrieben und war für den Nutzer nie sichtbar.)
+    const updatedProjectStatuses = await loadProjectStatus(payload.id, { silent: true });
     const assignedProjectData = updatedProjectStatuses.find(p => p.project_id === payload.id);
     if (assignedProjectData) {
       message += `, offen Impl ${Math.round(assignedProjectData.remaining_impl)}h, offen Test ${Math.round(assignedProjectData.remaining_test)}h`;
+      if (assignedProjectData.remaining_hours < 15) {
+        message += ` – Projekt "${assignedProjectData.project_name}" ist jetzt nahezu abgedeckt!`;
+      }
     }
-    toast(message);
   } else {
-    toast(message);
     await loadProjectStatus();
   }
+  toast(message);
   loadPlanning();
 } catch(e) {
   toast(e.message, 'error');
@@ -1083,16 +1092,16 @@ await doAssign(assignTarget.staff, roleId, assignTarget.weekKey, dragPayload);
 }
 
 // ── Projektstatus ─────────────────────────────────────────────────────────────
-async function loadProjectStatus(assignedProjectId = null) {
+async function loadProjectStatus(assignedProjectId = null, opts = {}) {
 let url = '/api/planning/project_status';
 if (URL_VARIANT_ID !== null) url += `?variant_id=${URL_VARIANT_ID}`;
 const rows = await api('GET', url);
 _allProjectStatusRows = rows;
-filterProjectStatus(assignedProjectId);
+filterProjectStatus(assignedProjectId, !!opts.silent);
 return rows;
 }
 
-function filterProjectStatus(assignedProjectId = null) {
+function filterProjectStatus(assignedProjectId = null, silent = false) {
 const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
 let rowsToRender = _allProjectStatusRows;
 
@@ -1115,6 +1124,22 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
   const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
   const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;
 
+  // Tooltips zur Plausibilisierung der Reststunden-Berechnung:
+  // Soll, bereits erfasste Ist-Stunden (worked_hours) und Planungen,
+  // aufgeteilt nach Kalenderwoche (vor/ab aktueller KW) – rein informativ.
+  // Die tatsächliche "Offen"-Berechnung teilt Planungen stattdessen nach dem
+  // letzten Ist-Stunden-Eintrag auf (siehe Backend), daher kann die Summe
+  // aus "vor"+"ab aktueller KW" größer sein als die hier ausgewiesene
+  // Offen-Stunde – das ist beabsichtigt und dient nur der Plausibilisierung.
+  const implTip = `Soll-Impl: ${Math.round(p.soll_impl)}h\n`
+                 + `Done-Impl (worked_hours): ${Math.round(p.done_impl)}h\n`
+                 + `Geplant vor aktueller KW: ${Math.round(p.planned_prev_impl)}h\n`
+                 + `Geplant ab aktueller KW: ${Math.round(p.planned_cur_impl)}h`;
+  const testTip  = `Soll-Test: ${Math.round(p.soll_test)}h\n`
+                 + `Done-Test (worked_hours): ${Math.round(p.done_test)}h\n`
+                 + `Geplant vor aktueller KW: ${Math.round(p.planned_prev_test)}h\n`
+                 + `Geplant ab aktueller KW: ${Math.round(p.planned_cur_test)}h`;
+
   return `<tr style="background:${bgColor}">
     <td>
       <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
@@ -1127,10 +1152,10 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
     <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
       ${showIst ? fmtKw(p.ist_kw) : '–'}
     </td>
-    <td class="text-mono" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'}">
+    <td class="text-mono" title="${esc(implTip)}" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'};cursor:help">
       ${Math.round(p.remaining_impl)}h
     </td>
-    <td class="text-mono" style="color:${p.remaining_test>0?'var(--danger)':p.remaining_test<0?'#7DCEA0':'var(--accent2)'}">
+    <td class="text-mono" title="${esc(testTip)}" style="color:${p.remaining_test>0?'var(--danger)':p.remaining_test<0?'#7DCEA0':'var(--accent2)'};cursor:help">
       ${Math.round(p.remaining_test)}h
     </td>
     <td>
@@ -1141,7 +1166,7 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
   </tr>`;
 }).join('');
 
-if (assignedProjectId !== null) {
+if (assignedProjectId !== null && !silent) {
   const assignedProject = rowsToRender.find(p => p.project_id === assignedProjectId);
   if (assignedProject && assignedProject.remaining_hours < 15) {
     toast(`Projekt "${assignedProject.project_name}" ist jetzt nahezu abgedeckt!`, 'success');
