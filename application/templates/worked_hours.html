@@ -8,20 +8,30 @@
       <h1 id="page-title">Stundenerfassung</h1>
       <div class="text-dim" style="font-size:12px" id="page-subtitle"></div>
     </div>
-	{% if has_edit_rights %}
-    <button class="btn btn-primary" onclick="openModal()">+ Neuer Eintrag</button>
-	{% endif %}
+    {% if has_edit_rights %}
+    <button class="btn btn-primary" id="btn-new" onclick="openModal()" style="display:none">+ Neuer Eintrag</button>
+    {% endif %}
   </div>
+
+  <!-- Projekt-Auswahl (nur wenn kein project_id übergeben) -->
+  {% if not project_id %}
+  <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px">
+    <label class="text-dim" style="white-space:nowrap;font-size:13px">Projekt:</label>
+    <select id="project-select" style="max-width:340px" onchange="onProjectSelect()">
+      <option value="">– Projekt auswählen –</option>
+    </select>
+  </div>
+  {% endif %}
 
   <!-- Soll vs. Ist Übersicht -->
   <div id="summary-row" style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px"></div>
 
   <!-- Burndown-Chart -->
-  <div style="margin-bottom:20px">
+  <div style="margin-bottom:20px" id="chart-wrap" style="display:none">
     <img id="burndown-chart" src="" alt="Burn-Down" style="max-width:100%;border-radius:4px;background:#fff">
   </div>
 
-  <table>
+  <table id="entries-table" style="display:none">
     <thead>
       <tr>
         <th>Datum</th>
@@ -62,24 +72,80 @@
 
 {% block scripts %}
 <script>
-const projectId = {{ project_id }};
-let editingId = null;
-let allEntries = [];
+// project_id aus Jinja (0 = nicht angegeben = standalone-Modus)
+const FIXED_PROJECT_ID = {{ project_id or 0 }};
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
-async function loadData() {
+let currentProjectId = FIXED_PROJECT_ID || null;
+let editingId = null;
+let allEntries = [];
+
+async function init() {
+  if (FIXED_PROJECT_ID) {
+    // Klassischer Aufruf über /worked_hours/{id}
+    await loadData(FIXED_PROJECT_ID);
+    if (hasEditRights) document.getElementById('btn-new').style.display = '';
+  } else {
+    // Standalone-Modus: Projekte laden und Dropdown befüllen
+    await loadProjectDropdown();
+  }
+}
+
+async function loadProjectDropdown() {
+  try {
+    const data = await api('GET', '/api/projects/?done=false');
+    const sel = document.getElementById('project-select');
+    if (!sel) return;
+    data.projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.project_id;
+      opt.textContent = `${p.project_name} (${p.customer})`;
+      sel.appendChild(opt);
+    });
+
+    // Aus localStorage letztes Projekt wiederherstellen
+    const saved = localStorage.getItem('workedHoursLastProjectId');
+    if (saved && sel.querySelector(`option[value="${saved}"]`)) {
+      sel.value = saved;
+      onProjectSelect();
+    }
+  } catch(e) {
+    console.error('Fehler beim Laden der Projekte:', e);
+  }
+}
+
+async function onProjectSelect() {
+  const sel = document.getElementById('project-select');
+  if (!sel) return;
+  const pid = parseInt(sel.value);
+  if (!pid) {
+    currentProjectId = null;
+    document.getElementById('summary-row').innerHTML = '';
+    document.getElementById('wh-body').innerHTML = '';
+    document.getElementById('entries-table').style.display = 'none';
+    document.getElementById('chart-wrap').style.display = 'none';
+    if (hasEditRights) document.getElementById('btn-new').style.display = 'none';
+    document.getElementById('page-title').textContent = 'Stundenerfassung';
+    document.getElementById('page-subtitle').textContent = '';
+    return;
+  }
+  localStorage.setItem('workedHoursLastProjectId', pid);
+  currentProjectId = pid;
+  if (hasEditRights) document.getElementById('btn-new').style.display = '';
+  await loadData(pid);
+}
+
+async function loadData(projectId) {
   const data = await api('GET', `/api/worked_hours/${projectId}`);
   allEntries = data.entries;
-  
-  const proj = data.project; // Die neuen, sauberen Projektdaten
+
+  const proj = data.project;
   const t = data.totals;
 
-  // Titel & Subtitel setzen (Nutzt jetzt immer die echten Projektdaten!)
   document.getElementById('page-title').textContent = `Stundenerfassung: ${proj.project_name}`;
   document.getElementById('page-subtitle').textContent =
     `Soll: ${proj.target_hours}h gesamt | ${proj.plan_impl}h Impl + ${proj.plan_test}h Test`;
 
-  // Soll-Werte direkt aus dem Projekt-Objekt lesen
   const planImpl  = proj.plan_impl;
   const planTest  = proj.plan_test;
   const planTotal = proj.target_hours;
@@ -109,7 +175,6 @@ async function loadData() {
     </div>
   `;
 
-  // ... (Der restliche Code für Tabelle und Burndown bleibt gleich)
   document.getElementById('wh-body').innerHTML = allEntries.map(e => `
     <tr>
       <td class="text-mono">${e.day}</td>
@@ -118,15 +183,17 @@ async function loadData() {
       <td class="text-mono">${e.impl_hours + e.test_hours}</td>
       <td>
         <div class="flex-gap">
-		${hasEditRights ? `
+        ${hasEditRights ? `
           <button class="btn btn-ghost btn-xs" onclick="openModal(${e.worked_hours_id})">✎</button>
           <button class="btn btn-danger btn-xs" onclick="deleteEntry(${e.worked_hours_id})">✕</button>
-		 ` : '<span class="text-dim" style="font-size:12px"></span>'}
+        ` : '<span class="text-dim" style="font-size:12px"></span>'}
         </div>
       </td>
     </tr>
   `).join('');
 
+  document.getElementById('entries-table').style.display = '';
+  document.getElementById('chart-wrap').style.display = '';
   document.getElementById('burndown-chart').src = `/api/charts/burndown/${projectId}?_=${Date.now()}`;
 }
 
@@ -154,8 +221,9 @@ function closeModal() {
 
 async function saveEntry() {
   const al = document.getElementById('modal-alert');
+  if (!currentProjectId) { al.innerHTML = '<div class="alert alert-error">Kein Projekt ausgewählt</div>'; return; }
   const payload = {
-    project_id: projectId,
+    project_id: currentProjectId,
     day:        document.getElementById('f-day').value,
     impl_hours: parseInt(document.getElementById('f-impl').value)||0,
     test_hours: parseInt(document.getElementById('f-test').value)||0,
@@ -165,7 +233,7 @@ async function saveEntry() {
     else           await api('POST', '/api/worked_hours/', payload);
     closeModal();
     toast('Gespeichert');
-    loadData();
+    loadData(currentProjectId);
   } catch(e) {
     al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
   }
@@ -176,10 +244,10 @@ async function deleteEntry(id) {
   try {
     await api('DELETE', `/api/worked_hours/${id}`);
     toast('Gelöscht');
-    loadData();
+    loadData(currentProjectId);
   } catch(e) { toast(e.message,'error'); }
 }
 
-loadData();
+init();
 </script>
 {% endblock %}

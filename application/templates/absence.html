@@ -1,37 +1,15 @@
-
-                        <!DOCTYPE html>
-                        <html lang="en">
-                        <head>
-                            <meta charset="UTF-8">
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-							<style>
-								body {
-									background-color: white; /* Ensure the iframe has a white background */
-								}
-
-								
-							</style>
-                        </head>
-                        <body>
-                            {% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Abwesenheiten – Kapaverwaltung{% endblock %}
-{% block head %}
-    {{ super() }}
-    <!-- Favicon -->
-    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    <!-- Oder, falls du ein PNG verwendest: -->
-    <!-- <link rel="icon" href="/static/favicon.png" type="image/png"> -->
-{% endblock %}
+
 {% block content %}
 <div class="card">
     <div class="card-header">
         <h1>Abwesenheitsverwaltung</h1>
-		{% if has_edit_rights %}
+        {% if has_edit_rights %}
         <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
-		{% endif %}
+        {% endif %}
     </div>
 
-    <!-- Neue Abwesenheitsübersichtstabelle -->
     <div style="margin-bottom: 24px;">
         <h2>
             Abwesenheitsübersicht
@@ -48,12 +26,8 @@
                         <th>Letzte Abwesenheit</th>
                     </tr>
                 </thead>
-                <tbody id="absence-summary-body">
-                    <!-- Zusammenfassende Zeilen werden hier eingefügt -->
-                </tbody>
-                <tfoot id="absence-summary-footer">
-                    <!-- Summenzeile wird hier eingefügt -->
-                </tfoot>
+                <tbody id="absence-summary-body"></tbody>
+                <tfoot id="absence-summary-footer"></tfoot>
             </table>
         </div>
     </div>
@@ -61,7 +35,7 @@
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
         <label class="text-dim" style="white-space:nowrap">Mitarbeiter:</label>
         <select id="filter-staff" style="max-width:200px" onchange="filterStaffChanged()">
-            <option value="">–</option> <!-- Geänderte Standardoption -->
+            <option value="">–</option>
         </select>
     </div>
     <table>
@@ -78,7 +52,6 @@
     </table>
 </div>
 
-<!-- Modal -->
 <div class="modal-backdrop" id="modal-backdrop">
     <div class="modal">
         <div class="modal-title" id="modal-title">Neue Abwesenheit</div>
@@ -119,70 +92,58 @@
 {% block scripts %}
 <script>
 let editingId = null;
-const STAFF_FILTER_KEY = 'absenceStaffFilter'; // Schlüssel für localStorage
-const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed'; // Schlüssel für localStorage für Collapsible
+const STAFF_FILTER_KEY = 'absenceStaffFilter';
+const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed';
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
 async function init() {
-    const staffResponse = await api('GET', '/api/staff/'); // Erhalte die gesamte Antwort
-    // Extrahiere die Mitarbeiterliste aus der Antwort
-    const staffMembers = staffResponse.staff_members; 
-    
+    const staffResponse = await api('GET', '/api/staff/');
+    const staffMembers = staffResponse.staff_members;
+
     const sel = document.getElementById('filter-staff');
     const fSel = document.getElementById('f-staff');
 
-    // Filter- und Neuanlage-Mitarbeiter-Dropdowns füllen
-    staffMembers.forEach(s => { // **Änderung hier: staffMembers.forEach**
+    staffMembers.forEach(s => {
         sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
         fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
     });
 
-    // Mitarbeiterfilter aus localStorage wiederherstellen
     const savedFilter = localStorage.getItem(STAFF_FILTER_KEY);
-    if (savedFilter !== null) { // Prüfen, ob der Wert explizit gespeichert wurde (auch leerer String)
+    if (savedFilter !== null) {
         sel.value = savedFilter;
     } else {
-        sel.value = ''; // Sicherstellen, dass Standardwert '-' ausgewählt ist
+        sel.value = '';
     }
 
-    // Abwesenheiten und Zusammenfassung basierend auf dem (wiederhergestellten) Filter laden
     loadAbsences();
     loadAbsenceSummary();
-    
-    // Zustand der Übersichtstabelle wiederherstellen
+
     const isCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
     if (isCollapsed) {
         document.getElementById('summary-table-container').style.display = 'none';
         document.getElementById('toggle-summary').textContent = '►';
     } else {
-        document.getElementById('summary-table-container').style.display = ''; // Standardmäßig anzeigen
+        document.getElementById('summary-table-container').style.display = '';
         document.getElementById('toggle-summary').textContent = '▼';
     }
 
-    // Event-Listener für Kalenderwochen-Anzeige hinzufügen
     document.getElementById('f-from').addEventListener('change', updateCalendarWeek);
     document.getElementById('f-to').addEventListener('change', updateCalendarWeek);
 }
 
 function filterStaffChanged() {
     const selectedStaff = document.getElementById('filter-staff').value;
-    localStorage.setItem(STAFF_FILTER_KEY, selectedStaff); // Filter in localStorage speichern
-    loadAbsences(); // Hauptliste aktualisieren (die nun filtert)
-    // Die Zusammenfassungstabelle wird NICHT gefiltert, daher kein Aufruf hier.
+    localStorage.setItem(STAFF_FILTER_KEY, selectedStaff);
+    loadAbsences();
 }
 
 function getCalendarWeek(dateString) {
     if (!dateString) return '';
     const date = new Date(dateString);
-    if (isNaN(date.getTime())) return ''; // Überprüfen, ob das Datum gültig ist
-    
-    // ISO 8601 Kalenderwochenberechnung
+    if (isNaN(date.getTime())) return '';
     date.setHours(0, 0, 0, 0);
-    // Donnerstag der aktuellen Woche entscheidet das Jahr.
     date.setDate(date.getDate() + 3 - (date.getDay() + 6) % 7);
-    // Der 4. Januar ist immer in Woche 1.
     const week1 = new Date(date.getFullYear(), 0, 4);
-    // Anpassen an Sonntag in Woche 1 und Zählen der Wochen vom Datum zu Woche 1.
     return 1 + Math.round(((date.getTime() - week1.getTime()) / 86400000 - 3 + (week1.getDay() + 6) % 7) / 7);
 }
 
@@ -192,36 +153,33 @@ function updateCalendarWeek(event) {
     document.getElementById(cwElementId).textContent = `(KW ${getCalendarWeek(inputElement.value)})`;
 }
 
-// Funktion zum Ein-/Ausklappen der Übersichtstabelle
 function toggleSummaryTable() {
     const container = document.getElementById('summary-table-container');
     const button = document.getElementById('toggle-summary');
     const isCollapsed = container.style.display === 'none';
-
     if (isCollapsed) {
-        container.style.display = ''; // Anzeigen
-        button.textContent = '▼'; // Pfeil nach unten
+        container.style.display = '';
+        button.textContent = '▼';
         localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'false');
     } else {
-        container.style.display = 'none'; // Ausblenden
-        button.textContent = '►'; // Pfeil nach rechts
+        container.style.display = 'none';
+        button.textContent = '►';
         localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'true');
     }
 }
 
 async function loadAbsenceSummary() {
-    // Die Zusammenfassungstabelle wird NICHT gefiltert.
-    const url = `/api/absence/summary`; // Kein shortname-Parameter mehr
+    const url = `/api/absence/summary`;
     const summary = await api('GET', url);
     const tbody = document.getElementById('absence-summary-body');
     const tfoot = document.getElementById('absence-summary-footer');
-    tbody.innerHTML = ''; // Vorherige Zusammenfassung löschen
-    tfoot.innerHTML = ''; // Vorherigen Footer löschen
+    tbody.innerHTML = '';
+    tfoot.innerHTML = '';
 
     let totalVacationAll = 0;
     let totalAbsenceAll = 0;
-    let overallMinAbsenceDate = null; // Speichert das früheste Abwesenheitsdatum teamweit
-    let overallMaxAbsenceDate = null; // Speichert das späteste Abwesenheitsdatum teamweit
+    let overallMinAbsenceDate = null;
+    let overallMaxAbsenceDate = null;
 
     if (summary.length === 0) {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden.</td></tr>`;
@@ -238,29 +196,19 @@ async function loadAbsenceSummary() {
             `;
             totalVacationAll += (s.vacation_days || 0);
             totalAbsenceAll += (s.total_absence_days || 0);
-
-            // Aktualisiere das teamweite Minimum-Abwesenheitsdatum
             if (s.first_absence) {
-                const currentFirstAbsence = new Date(s.first_absence);
-                if (overallMinAbsenceDate === null || currentFirstAbsence < overallMinAbsenceDate) {
-                    overallMinAbsenceDate = currentFirstAbsence;
-                }
+                const d = new Date(s.first_absence);
+                if (overallMinAbsenceDate === null || d < overallMinAbsenceDate) overallMinAbsenceDate = d;
             }
-
-            // Aktualisiere das teamweite Maximum-Abwesenheitsdatum
             if (s.last_absence) {
-                const currentLastAbsence = new Date(s.last_absence);
-                if (overallMaxAbsenceDate === null || currentLastAbsence > overallMaxAbsenceDate) {
-                    overallMaxAbsenceDate = currentLastAbsence;
-                }
+                const d = new Date(s.last_absence);
+                if (overallMaxAbsenceDate === null || d > overallMaxAbsenceDate) overallMaxAbsenceDate = d;
             }
         });
 
-        // Formatiere die teamweiten Min/Max-Daten für die Anzeige im Footer
         const formattedMinDate = overallMinAbsenceDate ? overallMinAbsenceDate.toISOString().split('T')[0] : '-';
         const formattedMaxDate = overallMaxAbsenceDate ? overallMaxAbsenceDate.toISOString().split('T')[0] : '-';
 
-        // Summenzeile hinzufügen
         tfoot.innerHTML = `
             <tr>
                 <th style="text-align: right;">Gesamt:</th>
@@ -276,10 +224,10 @@ async function loadAbsenceSummary() {
 async function loadAbsences() {
     const staff = document.getElementById('filter-staff').value;
     const url = staff ? `/api/absence/?shortname=${staff}` : '/api/absence/';
-    const rows = staff ? await api('GET', url) : []; // Keine Abwesenheiten laden, wenn kein Mitarbeiter ausgewählt ist
+    const rows = staff ? await api('GET', url) : [];
 
     const absenceBody = document.getElementById('absence-body');
-    absenceBody.innerHTML = ''; // Bestehende Zeilen löschen
+    absenceBody.innerHTML = '';
 
     if (rows.length === 0) {
         absenceBody.innerHTML = `<tr><td colspan="5" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
@@ -292,10 +240,10 @@ async function loadAbsences() {
                 <td><span class="badge" style="background:rgba(74,144,217,0.15);color:#4A90D9">${a.absence_type}</span></td>
                 <td>
                     <div class="flex-gap">
-					${hasEditRights ? `
+                    ${hasEditRights ? `
                         <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">✎</button>
                         <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>
-					` : '<span class="text-dim" style="font-size:12px"></span>'}
+                    ` : '<span class="text-dim" style="font-size:12px"></span>'}
                     </div>
                 </td>
             </tr>
@@ -307,13 +255,11 @@ async function openModal(id = null) {
     editingId = id;
     document.getElementById('modal-alert').innerHTML = '';
     document.getElementById('modal-title').textContent = id ? 'Abwesenheit bearbeiten' : 'Neue Abwesenheit';
-
-    // Kalenderwochen-Anzeigen zurücksetzen
     document.getElementById('f-from-cw').textContent = '';
     document.getElementById('f-to-cw').textContent = '';
 
     if (id) {
-        const all = await api('GET', '/api/absence/'); // Alle Abwesenheiten abrufen, um die spezifische zu finden
+        const all = await api('GET', '/api/absence/');
         const a = all.find(x => x.absence_id === id);
         if (a) {
             document.getElementById('f-staff').value = a.shortname;
@@ -321,21 +267,18 @@ async function openModal(id = null) {
             document.getElementById('f-to').value = a.absence_to;
             document.getElementById('f-type').value = a.absence_type;
             document.getElementById('f-staff').disabled = true;
-            // Kalenderwoche für bestehende Abwesenheit aktualisieren
             updateCalendarWeek({ target: document.getElementById('f-from') });
             updateCalendarWeek({ target: document.getElementById('f-to') });
         }
     } else {
         ['f-from', 'f-to'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('f-type').value = 'Urlaub';
-
-        // Mitarbeiterfilter im Modal vorbelegen, falls gesetzt
         const currentStaffFilter = document.getElementById('filter-staff').value;
         if (currentStaffFilter) {
             document.getElementById('f-staff').value = currentStaffFilter;
-            document.getElementById('f-staff').disabled = true; // Deaktivieren, wenn vorbelegt
+            document.getElementById('f-staff').disabled = true;
         } else {
-            document.getElementById('f-staff').disabled = false; // Aktivieren, wenn nicht vorbelegt
+            document.getElementById('f-staff').disabled = false;
         }
     }
     document.getElementById('modal-backdrop').classList.add('open');
@@ -348,9 +291,9 @@ function closeModal() {
 async function saveAbsence() {
     const alert = document.getElementById('modal-alert');
     const payload = {
-        shortname: document.getElementById('f-staff').value,
+        shortname:    document.getElementById('f-staff').value,
         absence_from: document.getElementById('f-from').value,
-        absence_to: document.getElementById('f-to').value,
+        absence_to:   document.getElementById('f-to').value,
         absence_type: document.getElementById('f-type').value,
     };
     try {
@@ -362,9 +305,9 @@ async function saveAbsence() {
         closeModal();
         toast('Gespeichert');
         loadAbsences();
-        loadAbsenceSummary(); // Zusammenfassung nach Speichern neu laden
+        loadAbsenceSummary();
     } catch (e) {
-        alert.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`; // e.detail für FastAPI HTTPExceptions
+        alert.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
     }
 }
 
@@ -374,27 +317,12 @@ async function deleteAbsence(id) {
         await api('DELETE', `/api/absence/${id}`);
         toast('Gelöscht');
         loadAbsences();
-        loadAbsenceSummary(); // Zusammenfassung nach Löschen neu laden
+        loadAbsenceSummary();
     } catch (e) {
-        toast(e.detail || e.message, 'error'); // e.detail für FastAPI HTTPExceptions
+        toast(e.detail || e.message, 'error');
     }
 }
 
 init();
 </script>
 {% endblock %}
-
-							<script>
-                            	const staffResponse = await api('GET', '/api/staff/'); // Erhalte die gesamte Antwort (ein Objekt)
-    const staffMembers = staffResponse.staff_members;      // Greife auf das Array der Mitarbeiter zu
-    
-    // ...
-    staffMembers.forEach(s => { // Iteriere jetzt über das korrekte Array
-        sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
-        fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
-    });
-    // ...
-							</script>
-                        </body>
-                        </html>
-                    

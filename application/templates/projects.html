@@ -1,16 +1,4 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body {
-            background-color: white;
-        }
-    </style>
-</head>
-<body>
-    {% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Projekte – Kapaverwaltung{% endblock %}
 
 {% block content %}
@@ -20,7 +8,6 @@
 <div class="flex-gap">
   {% if has_edit_rights %}
   <button class="btn btn-ghost" onclick="startJiraSync()" id="btn-jira-sync" title="Mit Jira synchronisieren">
-    <!-- Jira-Icon (SVG) -->
     <svg width="16" height="16" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">
       <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
       <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
@@ -118,15 +105,15 @@ style="max-width:100%;border-radius:4px;background:#fff">
 </div>
 <div class="form-row">
 <label>Soll-Stunden *</label>
-<input id="f-target" type="number" min="1" oninput="validateHours()">
+<input id="f-target" type="number" min="1" oninput="onTargetChange()">
 </div>
 <div class="form-row">
 <label>Impl-Stunden *</label>
-<input id="f-impl" type="number" min="0" oninput="validateHours()">
+<input id="f-impl" type="number" min="0" oninput="onImplChange()">
 </div>
 <div class="form-row">
 <label>Test-Stunden *</label>
-<input id="f-test" type="number" min="0" oninput="validateHours()">
+<input id="f-test" type="number" min="0" oninput="onTestChange()">
 </div>
 <div id="hours-warning" class="alert alert-error hidden">Impl + Test ≠ Soll-Stunden</div>
 
@@ -180,35 +167,25 @@ style="max-width:100%;border-radius:4px;background:#fff">
     Jira-Synchronisierung
   </div>
 
-  <!-- Lade-Indikator -->
   <div id="sync-loading" style="text-align:center;padding:40px 0;display:none">
     <div style="font-size:13px;color:var(--text2);margin-bottom:12px">Daten werden von Jira abgerufen …</div>
     <div class="sync-spinner"></div>
   </div>
 
-  <!-- Fehler -->
   <div id="sync-error" class="alert alert-error hidden"></div>
 
-  <!-- Vorschau -->
   <div id="sync-preview" style="display:none">
-    <!-- Zusammenfassung -->
     <div id="sync-summary" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px"></div>
-
-    <!-- Tabs -->
     <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px">
       <button class="sync-tab active" data-tab="updates" onclick="switchSyncTab('updates')">Aktualisierungen</button>
       <button class="sync-tab" data-tab="creates" onclick="switchSyncTab('creates')">Neue Projekte</button>
     </div>
-
-    <!-- Tab: Updates -->
     <div id="sync-tab-updates">
       <div id="sync-updates-empty" class="text-dim" style="font-size:13px;display:none">
         Keine Aktualisierungen – alle verknüpften Projekte sind aktuell.
       </div>
       <div id="sync-updates-list"></div>
     </div>
-
-    <!-- Tab: Creates -->
     <div id="sync-tab-creates" style="display:none">
       <div id="sync-creates-empty" class="text-dim" style="font-size:13px;display:none">
         Keine neuen Projekte gefunden.
@@ -228,7 +205,6 @@ style="max-width:100%;border-radius:4px;background:#fff">
 </div>
 
 <style>
-/* ── Sync-Dialog Styles ───────────────────────────────────────────────────── */
 .sync-spinner {
   width: 32px; height: 32px;
   border: 3px solid var(--border);
@@ -238,74 +214,38 @@ style="max-width:100%;border-radius:4px;background:#fff">
   margin: 0 auto;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-
 .sync-tab {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text2);
-  cursor: pointer;
-  font-family: var(--font-sans);
-  font-size: 13px;
-  font-weight: 500;
-  padding: 6px 16px 8px;
-  margin-bottom: -1px;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text2); cursor: pointer; font-family: var(--font-sans);
+  font-size: 13px; font-weight: 500; padding: 6px 16px 8px; margin-bottom: -1px;
   transition: all 0.15s;
 }
 .sync-tab:hover { color: var(--text); }
 .sync-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
 .sync-diff-card {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  margin-bottom: 10px;
-  overflow: hidden;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 10px; overflow: hidden;
 }
 .sync-diff-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
-  user-select: none;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer; user-select: none;
 }
 .sync-diff-header:hover { background: rgba(74,144,217,0.06); }
-.sync-diff-body {
-  border-top: 1px solid var(--border);
-  padding: 10px 14px;
-}
-.sync-diff-table {
-  width: 100%;
-  font-size: 12px;
-  border-collapse: collapse;
-}
+.sync-diff-body { border-top: 1px solid var(--border); padding: 10px 14px; }
+.sync-diff-table { width: 100%; font-size: 12px; border-collapse: collapse; }
 .sync-diff-table th {
-  font-size: 10px;
-  color: var(--text2);
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  padding: 4px 8px;
-  background: transparent;
+  font-size: 10px; color: var(--text2); text-transform: uppercase;
+  letter-spacing: .06em; padding: 4px 8px; background: transparent;
   border-bottom: 1px solid var(--border);
 }
 .sync-diff-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid rgba(42,48,80,0.3);
-  vertical-align: top;
+  padding: 4px 8px; border-bottom: 1px solid rgba(42,48,80,0.3); vertical-align: top;
 }
 .sync-diff-table tr:last-child td { border-bottom: none; }
 .val-old { color: var(--danger); text-decoration: line-through; font-family: var(--font-mono); }
 .val-new  { color: var(--accent2); font-family: var(--font-mono); }
 .val-new-create { color: var(--text); font-family: var(--font-mono); }
-
-.sync-checkbox {
-  width: 16px !important;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
-  flex-shrink: 0;
-}
+.sync-checkbox { width: 16px !important; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
 </style>
 
 {% endblock %}
@@ -316,19 +256,64 @@ let editingId = null;
 let sortField = localStorage.getItem('project_sort_field') || 'sort_order';
 let sortDir = parseInt(localStorage.getItem('project_sort_dir') || '1');
 let allProjects = [];
+let jiraBaseUrl = '';
 
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
-
-// Jira-Sync: Quellen-ID (muss zur sync.json passen)
 const SYNC_ROUTER  = 'projects';
 const SYNC_SOURCE  = 'jira_projects';
-
-// Aktuell geladene Preview-Daten
 let currentSyncPreview = null;
+
+// Jira-Base-URL laden
+async function loadJiraConfig() {
+    try {
+        const cfg = await api('GET', '/api/sync/config/jira_base_url');
+        jiraBaseUrl = cfg.base_url || '';
+    } catch(e) {
+        // Falls kein Endpunkt: stille Ignorierung
+    }
+}
+
+function jiraLink(jiraId) {
+    if (!jiraId) return '';
+    if (jiraBaseUrl) {
+        return `<a href="${jiraBaseUrl}/browse/${jiraId}" target="_blank" rel="noopener"
+            style="color:var(--accent);font-family:var(--font-mono);font-size:12px">${jiraId}</a>`;
+    }
+    return `<span class="text-mono" style="font-size:12px">${jiraId}</span>`;
+}
 
 document.getElementById('f-color')?.addEventListener('input', function() {
   document.getElementById('f-color-hex').textContent = this.value.toUpperCase();
 });
+
+// ── Stunden-Auto-Fill ──────────────────────────────────────────────────────────
+function onTargetChange() {
+  validateHours();
+}
+
+function onImplChange() {
+  const t = parseInt(document.getElementById('f-target').value || 0);
+  const i = parseInt(document.getElementById('f-impl').value || 0);
+  if (t > 0) {
+    const remaining = t - i;
+    if (remaining >= 0) {
+      document.getElementById('f-test').value = remaining;
+    }
+  }
+  validateHours();
+}
+
+function onTestChange() {
+  const t = parseInt(document.getElementById('f-target').value || 0);
+  const x = parseInt(document.getElementById('f-test').value || 0);
+  if (t > 0) {
+    const remaining = t - x;
+    if (remaining >= 0) {
+      document.getElementById('f-impl').value = remaining;
+    }
+  }
+  validateHours();
+}
 
 function validateHours() {
   const t = parseInt(document.getElementById('f-target').value||0);
@@ -432,7 +417,7 @@ function renderProjects(projects) {
   </td>
   <td><span class="badge" style="font-size:11px;padding:2px 6px;background:var(--background2);border-radius:4px">${p.project_type}</span></td>
   <td>${p.customer}</td>
-  <td class="detail-col text-dim">${p.jira_id||''}</td>
+  <td class="detail-col">${jiraLink(p.jira_id)}</td>
   <td class="text-mono">${p.target_hours}</td>
   <td class="detail-col text-mono">${p.impl_hours}</td>
   <td class="detail-col text-mono">${p.test_hours}</td>
@@ -572,7 +557,6 @@ function refreshCharts() {
 }
 
 let dragSrcId = null;
-
 function dragStart(e) {
   dragSrcId = parseInt(e.currentTarget.dataset.id);
   e.dataTransfer.effectAllowed = 'move';
@@ -612,7 +596,6 @@ function getWeekNumber(dateStr) {
 }
 
 // ── Jira-Sync ──────────────────────────────────────────────────────────────────
-
 function openSyncModal() {
   currentSyncPreview = null;
   document.getElementById('sync-loading').style.display   = 'none';
@@ -621,7 +604,6 @@ function openSyncModal() {
   document.getElementById('sync-footer').style.display    = 'none';
   document.getElementById('sync-modal-backdrop').classList.add('open');
 }
-
 function closeSyncModal() {
   document.getElementById('sync-modal-backdrop').classList.remove('open');
 }
@@ -632,9 +614,7 @@ async function startJiraSync() {
   const errorEl   = document.getElementById('sync-error');
   const previewEl = document.getElementById('sync-preview');
   const footerEl  = document.getElementById('sync-footer');
-
   loadingEl.style.display = 'block';
-
   try {
     const data = await api('POST', `/api/sync/${SYNC_ROUTER}/${SYNC_SOURCE}/preview`);
     currentSyncPreview = data;
@@ -651,7 +631,6 @@ async function startJiraSync() {
 }
 
 function renderSyncPreview(data) {
-  // Zusammenfassung
   const s = data.summary;
   document.getElementById('sync-summary').innerHTML = `
 <div class="card" style="padding:10px 14px;margin:0;flex:0 0 auto">
@@ -667,10 +646,8 @@ function renderSyncPreview(data) {
   <div style="font-size:22px;font-weight:600;font-family:var(--font-mono);color:var(--text2)">${s.skipped}</div>
 </div>`;
 
-  // Updates rendern
   const updates = data.diffs.filter(d => d.change_type === 'update');
   const creates = data.diffs.filter(d => d.change_type === 'create');
-
   const updatesEl = document.getElementById('sync-updates-list');
   const createsEl = document.getElementById('sync-creates-list');
 
@@ -681,7 +658,6 @@ function renderSyncPreview(data) {
     document.getElementById('sync-updates-empty').style.display = 'none';
     updatesEl.innerHTML = updates.map((d, i) => renderUpdateCard(d, i)).join('');
   }
-
   if (creates.length === 0) {
     document.getElementById('sync-creates-empty').style.display = 'block';
     createsEl.innerHTML = '';
@@ -689,8 +665,6 @@ function renderSyncPreview(data) {
     document.getElementById('sync-creates-empty').style.display = 'none';
     createsEl.innerHTML = creates.map((d, i) => renderCreateCard(d, i)).join('');
   }
-
-  // Standardmäßig alle angehakt
   document.querySelectorAll('.sync-checkbox').forEach(cb => cb.checked = true);
 }
 
@@ -701,13 +675,11 @@ function renderUpdateCard(diff, idx) {
   <td><span class="val-old">${ch.current_value ?? '–'}</span></td>
   <td><span class="val-new">${ch.new_value ?? '–'}</span></td>
 </tr>`).join('');
-
   return `
 <div class="sync-diff-card" data-diff-idx="${idx}" data-diff-type="update">
   <div class="sync-diff-header" onclick="toggleDiffBody(this)">
     <input type="checkbox" class="sync-checkbox" data-diff-type="update" data-diff-idx="${idx}"
-           onclick="event.stopPropagation(); updateSyncSelectionInfo()"
-           title="Diese Änderung übernehmen">
+           onclick="event.stopPropagation(); updateSyncSelectionInfo()" title="Diese Änderung übernehmen">
     <span style="font-weight:600">${diff.display_name}</span>
     <span class="text-dim" style="font-size:11px">${diff.external_id}</span>
     <span class="badge" style="background:rgba(230,126,34,0.15);color:var(--warn);font-size:10px">
@@ -730,13 +702,11 @@ function renderCreateCard(diff, idx) {
   <td style="color:var(--text2)">${ch.display_name}</td>
   <td><span class="val-new-create">${ch.new_value ?? '–'}</span></td>
 </tr>`).join('');
-
   return `
 <div class="sync-diff-card" data-diff-idx="${idx}" data-diff-type="create">
   <div class="sync-diff-header" onclick="toggleDiffBody(this)">
     <input type="checkbox" class="sync-checkbox" data-diff-type="create" data-diff-idx="${idx}"
-           onclick="event.stopPropagation(); updateSyncSelectionInfo()"
-           title="Dieses Projekt importieren">
+           onclick="event.stopPropagation(); updateSyncSelectionInfo()" title="Dieses Projekt importieren">
     <span style="font-weight:600">${diff.display_name}</span>
     <span class="text-dim" style="font-size:11px">${diff.external_id}</span>
     <span class="badge" style="background:rgba(46,204,113,0.15);color:var(--accent2);font-size:10px">Neu</span>
@@ -775,25 +745,17 @@ function updateSyncSelectionInfo() {
 
 async function applySync() {
   if (!currentSyncPreview) return;
-
   const allDiffs = currentSyncPreview.diffs;
   const selectedDiffs = [];
-
   document.querySelectorAll('.sync-checkbox:checked').forEach(cb => {
     const type = cb.dataset.diffType;
     const idx  = parseInt(cb.dataset.diffIdx);
     const matching = allDiffs.filter(d => d.change_type === type);
     if (matching[idx]) selectedDiffs.push(matching[idx]);
   });
-
-  if (selectedDiffs.length === 0) {
-    toast('Keine Änderungen ausgewählt.', 'error');
-    return;
-  }
-
+  if (selectedDiffs.length === 0) { toast('Keine Änderungen ausgewählt.', 'error'); return; }
   document.getElementById('btn-sync-apply').disabled = true;
   document.getElementById('btn-sync-apply').textContent = '…';
-
   try {
     const result = await api('POST', `/api/sync/${SYNC_ROUTER}/${SYNC_SOURCE}/apply`,
       { diffs: selectedDiffs });
@@ -810,9 +772,8 @@ async function applySync() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  loadJiraConfig();
   loadProjects();
 });
 </script>
 {% endblock %}
-</body>
-</html>
