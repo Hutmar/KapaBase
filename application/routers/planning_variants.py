@@ -70,14 +70,38 @@ def create_variant(data: VariantCreate):
             current_week_monday = date.fromisocalendar(iso[0], iso[1], 1)
 
             cur.execute("""
+                WITH future_projects AS (
+                    SELECT DISTINCT project_id
+                    FROM planning
+                    WHERE variant_id = %(src)s
+                      AND project_id IS NOT NULL
+                      AND start_date >= %(monday)s
+                ),
+                last_worked AS (
+                    SELECT project_id, MAX(day) AS last_day
+                    FROM worked_hours
+                    GROUP BY project_id
+                )
                 INSERT INTO planning
                     (task_id, project_id, staff, role_id, variant_id, start_date, end_date)
                 SELECT
-                    task_id, project_id, staff, role_id, %s, start_date, end_date
-                FROM planning
-                WHERE variant_id = %s
-                  AND start_date >= %s
-            """, (new_variant_id, data.copy_from_variant_id, current_week_monday))
+                    pl.task_id, pl.project_id, pl.staff, pl.role_id,
+                    %(new)s, pl.start_date, pl.end_date
+                FROM planning pl
+                LEFT JOIN last_worked lw ON lw.project_id = pl.project_id
+                WHERE pl.variant_id = %(src)s
+                  AND (
+                        pl.start_date >= %(monday)s
+                        OR (
+                            pl.project_id IN (SELECT project_id FROM future_projects)
+                            AND (lw.last_day IS NULL OR pl.end_date > lw.last_day)
+                        )
+                      )
+            """, {
+                "src": data.copy_from_variant_id,
+                "new": new_variant_id,
+                "monday": current_week_monday,
+            })
             copied_rows = cur.rowcount
 
         return {"variant_id": new_variant_id, "copied_rows": copied_rows}
