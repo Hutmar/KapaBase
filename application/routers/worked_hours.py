@@ -38,6 +38,14 @@ def list_worked_hours(project_id: int):
         
         if not project_info:
             raise HTTPException(404, "Projekt nicht gefunden")
+            
+        if isinstance(project_info, tuple):
+            project_info = {
+                "project_name": project_info[0],
+                "target_hours": project_info[1],
+                "plan_impl": project_info[2],
+                "plan_test": project_info[3]
+            }
 
         # 2. Reine Ist-Stunden absteigend nach Datum laden (ohne redundanten Spalten-Mischmasch)
         cur.execute("""

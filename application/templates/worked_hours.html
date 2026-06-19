@@ -141,6 +141,16 @@ async function loadData(projectId) {
 
   const proj = data.project;
   const t = data.totals;
+  
+  const titleEl = document.getElementById('page-title');
+  const subtitleEl = document.getElementById('page-subtitle');
+  
+  if (titleEl) {
+    titleEl.textContent = `Stundenerfassung: ${proj.project_name}`;
+  }
+  if (subtitleEl) {
+    subtitleEl.textContent = `Soll: ${proj.target_hours}h gesamt | ${proj.plan_impl}h Impl + ${proj.plan_test}h Test`;
+  }
 
   document.getElementById('page-title').textContent = `Stundenerfassung: ${proj.project_name}`;
   document.getElementById('page-subtitle').textContent =
