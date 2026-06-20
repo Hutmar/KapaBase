@@ -5,8 +5,19 @@ routers/planning.py – Ressourcenzuordnung (Tabelle: planning)
 DB-Schema:
 planning(planning_id, task_id, project_id, staff, role_id, variant_id, start_date date, end_date date)
 – start_date/end_date = Montag/Freitag der zugewiesenen Kalenderwoche
+  (bzw. ein Teilbereich davon, siehe unten)
 – Stunden werden NICHT gespeichert; sie ergeben sich aus staff.hours_per_day
   multipliziert mit den effektiven Arbeitstagen (abzgl. Feiertage + Abwesenheiten)
+
+Zwei Projekte pro Mitarbeiter/Rolle/KW:
+– Wird einem Mitarbeiter ein zweites Projekt für dieselbe Kalenderwoche
+  zugewiesen, wird die Woche aufgeteilt: der bestehende Eintrag wird auf
+  Montag–Mittwoch verkürzt, der neue Eintrag erhält Donnerstag–Freitag.
+– Wird einer der beiden Einträge wieder gelöscht, wird der verbleibende
+  Eintrag wieder auf die volle Woche (Montag–Freitag) ausgedehnt.
+– Die Stundenberechnung (Liefertermin/Restaufwand) berücksichtigt diese
+  Aufteilung: pro Eintrag werden nur die Arbeitsstunden des tatsächlichen
+  Datumsbereichs (start_date–end_date) angerechnet, nicht die volle KW.
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -113,15 +124,53 @@ def _is_majority_absent(shortname: str, week_key: str,
     absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
     return absent > total / 2
 
+def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
+                                   range_start: date, range_end: date,
+                                   absences: list, at_hols: Set[date]) -> float:
+    """
+    Effektive Stunden des Mitarbeiters im angegebenen Datumsbereich (inkl.
+    beider Enden): hours_per_day × (Arbeitstage im Bereich − Abwesenheitstage
+    im Bereich).
+
+    Wird für Planungseinträge verwendet, die nicht zwingend eine volle
+    Kalenderwoche abdecken – z.B. wenn einem Mitarbeiter zwei Projekte in
+    derselben KW zugewiesen sind und die Woche dadurch in Mo–Mi / Do–Fr
+    aufgeteilt wurde. _effective_hours_in_week() deckt den Sonderfall
+    „ganze Woche" ab und ruft intern diese Funktion auf.
+    """
+    if range_end < range_start:
+        return 0.0
+
+    total_days = 0
+    cur = range_start
+    while cur <= range_end:
+        if cur.weekday() < 5 and cur not in at_hols:
+            total_days += 1
+        cur += timedelta(days=1)
+
+    absent_days: Set[date] = set()
+    for ab in absences:
+        if ab["shortname"] != shortname:
+            continue
+        s = max(ab["absence_from"], range_start)
+        e = min(ab["absence_to"],   range_end)
+        c = s
+        while c <= e:
+            if c.weekday() < 5 and c not in at_hols:
+                absent_days.add(c)
+            c += timedelta(days=1)
+
+    return max(0.0, (total_days - len(absent_days)) * float(hours_per_day))
+
 def _effective_hours_in_week(shortname: str, hours_per_day: float,
                              week_key: str, absences: list, at_hols: Set[date]) -> float:
     """
-    Effektive Stunden des Mitarbeiters in der KW:
-    hours_per_day × (Arbeitstage − Abwesenheitstage)
+    Effektive Stunden des Mitarbeiters in der vollen KW (Mo–Fr):
+    hours_per_day × (Arbeitstage − Abwesenheitstage).
+    Delegiert an _effective_hours_in_date_range() mit den Wochengrenzen.
     """
-    total  = _total_workdays_in_week(week_key, at_hols)
-    absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
-    return max(0.0, (total - absent) * float(hours_per_day))
+    monday, friday = _week_bounds(week_key)
+    return _effective_hours_in_date_range(shortname, hours_per_day, monday, friday, absences, at_hols)
 
 def _build_at_hols(start: date, end: date) -> Set[date]:
     years = set(range(start.year, end.year + 1))
@@ -459,6 +508,9 @@ def get_planning(
                 }
 
         # ── Kapazität pro Mitarbeiter + KW ───────────────────────────────────
+        # Hinweis: bewusst weiterhin über die volle Kalenderwoche berechnet –
+        # dies ist die maximal verfügbare Kapazität des Mitarbeiters und
+        # unabhängig davon, ob ihm 0, 1 oder 2 Projekte zugewiesen sind.
         capacity_by_staff: dict = {}
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}
 
@@ -581,10 +633,15 @@ def get_planning(
         if last_worked_day is not None and pr["end_date"] <= last_worked_day:
             continue
 
-        wk = iso_week_key(pr["start_date"])
-        h  = _effective_hours_in_week(
+        # Stunden anteilig nach dem tatsächlichen Datumsbereich des
+        # Planungseintrags berechnen (NICHT nach der vollen Kalenderwoche!).
+        # Sind einem Mitarbeiter zwei Projekte in derselben KW zugewiesen
+        # (Mo–Mi / Do–Fr), erhält jedes Projekt nur den ihm zustehenden
+        # Anteil (3/5 bzw. 2/5) an der Wochenkapazität.
+        h = _effective_hours_in_date_range(
             pr["staff"], float(pr["hours_per_day"]),
-            wk, absences_status, at_hols_status)
+            pr["start_date"], pr["end_date"],
+            absences_status, at_hols_status)
 
         plan_agg_status.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
         role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
@@ -637,17 +694,23 @@ def get_planning(
 def assign_planning(data: PlanningEntry):
     """
     Projekt oder Task einem Mitarbeiter für eine KW zuweisen.
-    Speichert start_date (Montag) und end_date (Freitag) der KW in der DB.
+
+    Pro Mitarbeiter/Rolle/Kalenderwoche sind maximal zwei Zuweisungen möglich:
+    – 1. Zuweisung: belegt die gesamte Woche (Montag–Freitag).
+    – 2. Zuweisung: die bestehende Zuweisung wird auf Montag–Mittwoch
+         verkürzt, die neue Zuweisung erhält Donnerstag–Freitag.
+    – Eine 3. Zuweisung in derselben Woche wird abgelehnt.
+
     variant_id: optional; wenn None → aktive Variante wird verwendet.
     """
     if data.task_id is None and data.project_id is None:
         raise HTTPException(422, "task_id oder project_id muss angegeben sein")
 
     monday, friday = _week_bounds(data.calendar_week)
+    wednesday = monday + timedelta(days=2)
+    thursday  = monday + timedelta(days=3)
 
     with get_cursor() as cur:
-        resolved_variant_id = _resolve_variant_id(cur, data.variant_id)
-
         cur.execute("""
             SELECT shortname, absence_from, absence_to, absence_type
             FROM absence WHERE shortname = %s
@@ -663,20 +726,49 @@ def assign_planning(data: PlanningEntry):
     with get_cursor(commit=True) as cur:
         resolved_variant_id = _resolve_variant_id(cur, data.variant_id)
 
+        # Alle Zuweisungen des Mitarbeiters ermitteln, die sich mit dieser
+        # Kalenderwoche überschneiden (volle Wochen- oder Halbwochen-Einträge).
         cur.execute("""
-            SELECT planning_id, role_id, project_id, task_id FROM planning
-            WHERE staff = %s AND start_date = %s AND variant_id = %s
-        """, (data.staff, monday, resolved_variant_id))
-        existing = cur.fetchone()
+            SELECT planning_id, role_id, project_id, task_id, start_date, end_date
+            FROM planning
+            WHERE staff = %s AND variant_id = %s
+            AND start_date <= %s AND end_date >= %s
+            ORDER BY start_date ASC
+        """, (data.staff, resolved_variant_id, friday, monday))
+        existing_rows = cur.fetchall()
 
-        if existing:
-            if existing["role_id"] != data.role_id:
-                raise HTTPException(409,
-                    "Mitarbeiter ist in dieser Woche bereits als andere Rolle eingeplant")
+        other_role_rows = [r for r in existing_rows if r["role_id"] != data.role_id]
+        if other_role_rows:
+            raise HTTPException(409,
+                "Mitarbeiter ist in dieser Woche bereits als andere Rolle eingeplant")
+
+        same_role_rows = [r for r in existing_rows if r["role_id"] == data.role_id]
+
+        if len(same_role_rows) >= 2:
+            raise HTTPException(409,
+                "Für diese Woche sind bereits zwei Projekte zugewiesen – mehr ist nicht möglich")
+
+        if len(same_role_rows) == 1:
+            # ── Zweite Zuweisung: Woche aufteilen ─────────────────────────
+            # Bestehenden Eintrag auf Mo–Mi verkürzen, neuen Eintrag auf Do–Fr setzen.
+            existing = same_role_rows[0]
             cur.execute("""
-                DELETE FROM planning WHERE planning_id = %s
-            """, (existing["planning_id"],))
+                UPDATE planning SET start_date = %s, end_date = %s
+                WHERE planning_id = %s
+            """, (monday, wednesday, existing["planning_id"]))
 
+            cur.execute("""
+                INSERT INTO planning (task_id, project_id, staff, role_id, variant_id, start_date, end_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING planning_id
+            """, (data.task_id, data.project_id, data.staff,
+                  data.role_id, resolved_variant_id, thursday, friday))
+            new_id = cur.fetchone()["planning_id"]
+
+            return {"status": "ok", "planning_id": new_id,
+                    "start_date": str(thursday), "end_date": str(friday)}
+
+        # ── Erste Zuweisung: ganze Woche ──────────────────────────────────
         cur.execute("""
             INSERT INTO planning (task_id, project_id, staff, role_id, variant_id, start_date, end_date)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -696,20 +788,37 @@ def remove_planning(data: PlanningDelete):
     Planungszuordnung entfernen.
     Bevorzugt: direkte Löschung per planning_id.
     Fallback: Löschung per staff + calendar_week (+ optionale project_id/task_id).
+
+    Wurde die Woche zuvor auf zwei Zuweisungen aufgeteilt (Mo–Mi / Do–Fr),
+    wird die verbleibende Zuweisung nach dem Löschen wieder auf die volle
+    Woche (Mo–Fr) ausgedehnt.
     """
     with get_cursor(commit=True) as cur:
 
+        deleted_row = None
+
         if data.planning_id is not None:
+            cur.execute("""
+                SELECT planning_id, staff, role_id, variant_id, start_date, end_date
+                FROM planning WHERE planning_id = %s
+            """, (data.planning_id,))
+            deleted_row = cur.fetchone()
             cur.execute("DELETE FROM planning WHERE planning_id = %s", (data.planning_id,))
+
         else:
             if not data.staff or not data.calendar_week:
                 raise HTTPException(422, "planning_id oder (staff + calendar_week) müssen angegeben sein")
 
-            monday, _ = _week_bounds(data.calendar_week)
+            monday, friday = _week_bounds(data.calendar_week)
             resolved_variant_id = _resolve_variant_id(cur, data.variant_id)
 
-            sql    = "DELETE FROM planning WHERE staff = %s AND start_date = %s AND variant_id = %s"
-            params: list = [data.staff, monday, resolved_variant_id]
+            sql = """
+                SELECT planning_id, staff, role_id, variant_id, start_date, end_date
+                FROM planning
+                WHERE staff = %s AND variant_id = %s
+                AND start_date <= %s AND end_date >= %s
+            """
+            params: list = [data.staff, resolved_variant_id, friday, monday]
 
             if data.project_id is not None:
                 sql += " AND project_id = %s"
@@ -718,7 +827,31 @@ def remove_planning(data: PlanningDelete):
                 sql += " AND task_id = %s"
                 params.append(data.task_id)
 
+            sql += " ORDER BY start_date ASC LIMIT 1"
             cur.execute(sql, params)
+            deleted_row = cur.fetchone()
+            if deleted_row:
+                cur.execute("DELETE FROM planning WHERE planning_id = %s", (deleted_row["planning_id"],))
+
+        # ── Verbleibenden Eintrag derselben Woche ggf. auf volle Woche ausdehnen ──
+        if deleted_row:
+            ds_iso      = deleted_row["start_date"].isocalendar()
+            week_monday = date.fromisocalendar(ds_iso[0], ds_iso[1], 1)
+            week_friday = week_monday + timedelta(days=4)
+
+            cur.execute("""
+                SELECT planning_id FROM planning
+                WHERE staff = %s AND role_id = %s AND variant_id = %s
+                AND start_date <= %s AND end_date >= %s
+            """, (deleted_row["staff"], deleted_row["role_id"], deleted_row["variant_id"],
+                  week_friday, week_monday))
+            remaining = cur.fetchall()
+
+            if len(remaining) == 1:
+                cur.execute("""
+                    UPDATE planning SET start_date = %s, end_date = %s
+                    WHERE planning_id = %s
+                """, (week_monday, week_friday, remaining[0]["planning_id"]))
 
     return {"status": "ok"}
 
@@ -796,6 +929,10 @@ def project_planning_status(variant_id: Optional[int] = None):
     #    bereits durch die tatsächlich erfassten Stunden abgedeckt und dürfen
     #    NICHT nochmals von den Sollstunden abgezogen werden.
     #    plan_cur = Planungen NACH dem letzten Ist-Eintrag → fließt in "offen" ein.
+    #    Die Stunden pro Planungseintrag werden dabei anteilig nach dem
+    #    tatsächlichen Datumsbereich des Eintrags berechnet (nicht nach der
+    #    vollen Kalenderwoche), damit zwei Projekte in derselben KW (Mo–Mi /
+    #    Do–Fr) jeweils nur ihren Anteil (3/5 bzw. 2/5) angerechnet bekommen.
     #
     # 2) Rein informativer Split für den Tooltip (Plausibilisierung): Planungen
     #    nach Kalenderwoche aufgeteilt in "vor aktueller KW" / "ab aktueller
@@ -812,9 +949,13 @@ def project_planning_status(variant_id: Optional[int] = None):
     for pr in plan_rows:
         pid = pr["project_id"]
         wk  = iso_week_key(pr["start_date"])
-        h   = _effective_hours_in_week(
+
+        # Stunden anteilig nach dem tatsächlichen Datumsbereich des
+        # Planungseintrags berechnen (NICHT nach der vollen Kalenderwoche!).
+        h = _effective_hours_in_date_range(
             pr["staff"], float(pr["hours_per_day"]),
-            wk, all_absences, at_hols)
+            pr["start_date"], pr["end_date"],
+            all_absences, at_hols)
 
         role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
 

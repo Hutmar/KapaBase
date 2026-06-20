@@ -81,6 +81,7 @@ text-align: center;
 cursor: default;
 position: relative;
 box-sizing: border-box;
+overflow: hidden;
 }
 .planning-body-table td.droptarget { cursor: copy; }
 .planning-body-table td.droptarget:hover {
@@ -96,6 +97,17 @@ rgba(30,35,54,0.55) 4px, rgba(30,35,54,0.55) 8px
 cursor: not-allowed !important;
 color: var(--text2);
 font-size: 10px;
+overflow: hidden;
+word-break: break-word;
+}
+.absent-cell-blocked-label {
+display: block;
+width: 78px;
+margin: 0 auto;
+opacity: .6;
+white-space: normal;
+overflow: hidden;
+word-break: break-word;
 }
 .past-cell {
 background: repeating-linear-gradient(
@@ -114,6 +126,19 @@ background: repeating-linear-gradient(
 rgba(42,48,80,0.2), rgba(42,48,80,0.2) 4px,
 transparent 4px, transparent 8px
 );
+}
+.cell-items-wrap {
+display: flex;
+gap: 2px;
+width: 100%;
+height: 100%;
+align-items: center;
+justify-content: center;
+}
+.cell-items-wrap .planning-cell {
+flex: 1 1 0;
+max-width: 82px;
+min-width: 0;
 }
 .planning-cell {
 display: inline-flex;
@@ -155,6 +180,25 @@ opacity: 0.45;
 text-decoration: line-through;
 filter: grayscale(60%);
 }
+.add-second-btn {
+display: none;
+position: absolute;
+bottom: -5px; right: -5px;
+background: var(--accent2);
+color: #fff;
+border: none;
+border-radius: 50%;
+width: 16px; height: 16px;
+font-size: 12px;
+font-weight: 700;
+cursor: pointer;
+align-items: center;
+justify-content: center;
+line-height: 1;
+z-index: 3;
+padding: 0;
+}
+.planning-body-table td:hover .add-second-btn { display: flex; }
 /* Kapazitäts- und Liefertermin-Zeilen */
 .cap-row td {
 background: var(--bg3);
@@ -758,14 +802,15 @@ ordered.forEach(sr => {
     const blockedByOtherRole = allWeekItems.some(pl => pl.role_id !== sr.role_id);
 
     if (isPast) {
+      const chipMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
       const chips = weekItems.map(pl => {
         const label  = esc(pl.task_name || pl.project_name || '?');
         const color  = pl.task_color || pl.project_color || '#555';
         const txtCol = contrastColor(color);
         const outdated = pl.is_outdated ? ' outdated' : '';
-        return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}" title="${label}">${label}</div>`;
+        return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth}" title="${label}">${label}</div>`;
       }).join('');
-      row += `<td class="past-cell" title="Vergangene KW">${chips}</td>`;
+      row += `<td class="past-cell" title="Vergangene KW"><div class="cell-items-wrap">${chips}</div></td>`;
       return;
     }
 
@@ -782,7 +827,7 @@ ordered.forEach(sr => {
     if (blockedByOtherRole && weekItems.length === 0) {
       const bl = esc((allWeekItems[0] || {}).task_name || (allWeekItems[0] || {}).project_name || '');
       row += `<td class="absent-cell" style="font-size:10px" title="Andere Rolle eingeplant: ${bl}">
-        <span style="opacity:.6">— ${bl} —</span>
+        <span class="absent-cell-blocked-label">— ${bl} —</span>
       </td>`;
       return;
     }
@@ -793,6 +838,7 @@ ordered.forEach(sr => {
     const tooltip = `KW ${parseInt(wk.split('-W')[1])}: ${fmtDate(mon)}–${fmtDate(fri)} | Kap: ${Math.round(capHours*10)/10}h`
                   + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
+    const itemMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
     const chips = weekItems.map(pl => {
       const label    = esc(pl.task_name || pl.project_name || '?');
       const color    = pl.task_color || pl.project_color || '#555';
@@ -802,18 +848,33 @@ ordered.forEach(sr => {
       const planId   = pl.planning_id != null ? pl.planning_id : 'null';
       const outdated = pl.is_outdated ? ' outdated' : '';
       const oTitle   = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
-      return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol}" title="${label}${oTitle}">
+      return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}${oTitle}">
         <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
         <button class="remove-btn"
           onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>
       </div>`;
     }).join('');
 
+    // "+"-Button: nur anzeigen, wenn in dieser Zelle/Rolle genau eine
+    // Zuweisung existiert (max. 2 Projekte pro Mitarbeiter/Rolle/KW).
+    const addBtn = (weekItems.length === 1)
+      ? `<button class="add-second-btn" title="Zweites Projekt für diese Woche zuweisen"
+           onclick="event.stopPropagation(); cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')">+</button>`
+      : '';
+
+    // Klick auf die freie Zelle öffnet die Zuweisung nur, wenn noch nichts
+    // zugewiesen ist. Eine zweite Zuweisung erfolgt ausschließlich über
+    // den "+"-Button, damit ein Klick auf einen bestehenden Chip nicht
+    // versehentlich eine zweite Zuweisung öffnet.
+    const cellOnclick = (weekItems.length === 0)
+      ? `onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"`
+      : '';
+
     row += `<td class="droptarget${partialClass}"
       ondragover="event.preventDefault();"
       ondrop="event.preventDefault();"
-      onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"
-      title="${tooltip}">${chips}</td>`;
+      ${cellOnclick}
+      title="${tooltip}"><div class="cell-items-wrap">${chips}</div>${addBtn}</td>`;
   });
 
   row += '</tr>';
