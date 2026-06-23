@@ -246,6 +246,16 @@ style="max-width:100%;border-radius:4px;background:#fff">
 .val-new  { color: var(--accent2); font-family: var(--font-mono); }
 .val-new-create { color: var(--text); font-family: var(--font-mono); }
 .sync-checkbox { width: 16px !important; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.project-name-link {
+    color: inherit;         /* Erbt die Textfarbe vom Elternelement (strong) */
+    font-size: inherit;     /* Erbt die Schriftgröße vom Elternelement (strong) */
+    text-decoration: none;  /* Entfernt die Standard-Unterstreichung des Links */
+    cursor: pointer;        /* Zeigt an, dass es sich um ein klickbares Element handelt */
+}
+
+.project-name-link:hover {
+    text-decoration: underline; /* Zeigt eine Unterstreichung nur beim Hovern an */
+}
 </style>
 
 {% endblock %}
@@ -413,7 +423,10 @@ function renderProjects(projects) {
   <td style="color:var(--text2);cursor:grab">⠿</td>
   <td>
     <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-    <strong>${p.project_name}</strong>
+    ${p.project_type === 'Project' ?
+        `<a href="/planning_status?project_ids=${p.project_id}" class="project-name-link"><strong>${p.project_name}</strong></a>`
+        : `<strong>${p.project_name}</strong>`
+    }
   </td>
   <td><span class="badge" style="font-size:11px;padding:2px 6px;background:var(--background2);border-radius:4px">${p.project_type}</span></td>
   <td>${p.customer}</td>
