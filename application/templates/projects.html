@@ -424,7 +424,7 @@ function renderProjects(projects) {
   <td>
     <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
     ${p.project_type === 'Project' ?
-        `<a href="/planning_status?project_ids=${p.project_id}" class="project-name-link"><strong>${p.project_name}</strong></a>`
+        `<a href="/planning_status?project_ids=${p.project_id}" class="project-name-link" target="_blank" rel="noopener noreferrer"><strong>${p.project_name}</strong></a>`
         : `<strong>${p.project_name}</strong>`
     }
   </td>
