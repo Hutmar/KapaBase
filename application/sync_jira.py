@@ -13,7 +13,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 import requests
-from requests.auth import HTTPBasicAuth
+from requests.auth import HTTPBasicAuth # Beibehalten, falls es doch irgendwo anders gebraucht wird, aber nicht mehr für die Haupt-API-Aufrufe
 
 from db import get_cursor
 from sync_engine import (
@@ -64,25 +64,22 @@ class JiraSyncAdapter(SyncAdapter):
         super().__init__(config)
         jira_cfg = config.get("jira", {})
         self.base_url       = jira_cfg["base_url"].rstrip("/")
-        self.api_key        = jira_cfg["api_key"]
-        self.email          = jira_cfg["email"]
-        self.projects       = jira_cfg.get("projects", [])
-        self.import_query   = jira_cfg.get("import_query", "")
-        self.field_mapping: dict[str, str]   = jira_cfg.get("field_mapping", {})
-        self.status_mapping: dict[str, dict] = jira_cfg.get("status_mapping", {})
-        self.defaults: dict                  = jira_cfg.get("defaults", {})
+        self.api_key        = jira_cfg["api_key"] # Dies sollte jetzt dein Bearer Token sein
+        self.email          = jira_cfg["email"]   # Eventuell für andere Zwecke behalten, aber nicht mehr direkt für Auth
 
         # API-Version konfigurierbar: "3" für Jira Cloud (Default), "2" für Jira Server
         self.api_version = str(jira_cfg.get("api_version", "3"))
 
-        self._auth = HTTPBasicAuth(self.email, self.api_key)
+        # NEU: Authentifizierung über den Headers-Parameter für Bearer Token
+        self._auth_headers = {"Authorization": f"Bearer {self.api_key}"}
+        self._auth = None # HTTPBasicAuth wird hier nicht mehr verwendet
 
     # ── HTTP-Hilfsmethoden ─────────────────────────────────────────────────────
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}/rest/api/{self.api_version}/{path.lstrip('/')}"
         logger.debug("[Jira] GET %s params=%s", url, params)
-        resp = requests.get(url, auth=self._auth, params=params, timeout=15)
+        resp = requests.get(url, headers=self._auth_headers, params=params, timeout=15)
         resp.raise_for_status()
         return resp.json()
 
@@ -119,7 +116,7 @@ class JiraSyncAdapter(SyncAdapter):
                         "[Jira] POST /search/jql body=%s",
                         {k: v for k, v in body.items() if k != "fields"},
                     )
-                    resp = requests.post(url_new, auth=self._auth, json=body, timeout=15)
+                    resp = requests.post(url_new, headers=self._auth_headers, json=body, timeout=15)
 
                     # 404/410 → neuer Endpunkt nicht verfügbar → Fallback
                     if resp.status_code in (404, 410):
@@ -131,6 +128,7 @@ class JiraSyncAdapter(SyncAdapter):
 
                     resp.raise_for_status()
                     data = resp.json()
+
                     issues = data.get("issues", [])
                     all_issues.extend(issues)
                     logger.info(
@@ -157,7 +155,7 @@ class JiraSyncAdapter(SyncAdapter):
         while True:
             resp = requests.get(
                 f"{self.base_url}/rest/api/{self.api_version}/search",
-                auth=self._auth,
+                headers=self._auth_headers,
                 params={
                     "jql":        jql,
                     "startAt":    start_at,
@@ -166,7 +164,16 @@ class JiraSyncAdapter(SyncAdapter):
                 },
                 timeout=15,
             )
-            resp.raise_for_status()
+            # Hier ist der erweiterte Fehler-Logging-Block aus der vorherigen Antwort
+            try:
+                resp.raise_for_status()
+            except requests.exceptions.HTTPError as exc:
+                logger.error(
+                    "[Jira] HTTP-Fehler beim Suchen: %s %s. Response Body: %s",
+                    exc.response.status_code, exc.response.reason, exc.response.text,
+                )
+                raise # Fehler weiterwerfen
+
             data = resp.json()
             issues = data.get("issues", [])
             all_issues.extend(issues)
