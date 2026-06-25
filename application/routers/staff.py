@@ -27,10 +27,11 @@ class StaffUpdate(BaseModel):
     remark: Optional[str] = None
     is_active: Optional[bool] = None
     roles: Optional[List[str]] = None
+    force_delete_plannings: Optional[bool] = False
 
 # ── Hilfsfunktion ──────────────────────────────────────────────────────────────
 
-def _sync_roles(cur, shortname: str, target_roles: List[str]):
+def _sync_roles(cur, shortname: str, target_roles: List[str], force_delete_plannings: bool = False):
     """
     Synchronisiert die Rollen eines Mitarbeiters schonend.
     Existierende Rollen bleiben unberührt. Neue werden hinzugefügt.
@@ -38,8 +39,14 @@ def _sync_roles(cur, shortname: str, target_roles: List[str]):
     """
 
     # 1. Aktuelle Rollen aus der DB holen
-    cur.execute("SELECT role FROM roles WHERE shortname = %s", (shortname,))
-    current_roles = [row["role"] if isinstance(row, dict) else row[0] for row in cur.fetchall()]
+    cur.execute("SELECT role_id, role FROM roles WHERE shortname = %s", (shortname,))
+    db_rows = cur.fetchall()
+    
+    current_roles = [row["role"] if isinstance(row, dict) else row[1] for row in db_rows]
+    role_id_map = {
+        (row["role"] if isinstance(row, dict) else row[1]): (row["role_id"] if isinstance(row, dict) else row[0])
+        for row in db_rows
+    }
 
     # Sets für den einfachen Abgleich erstellen
     target_set = set(target_roles)
@@ -56,6 +63,34 @@ def _sync_roles(cur, shortname: str, target_roles: List[str]):
     # 3. Rollen bestimmen, die gelöscht werden müssen
     roles_to_delete = current_set - target_set
     for role in roles_to_delete:
+        role_id = role_id_map.get(role)
+        if role_id:
+            # Prüfen, ob Planungen für diese Rolle existieren
+            cur.execute(
+                "SELECT start_date FROM planning WHERE staff = %s AND role_id = %s",
+                (shortname, role_id)
+            )
+            plannings = cur.fetchall()
+            
+            if plannings:
+                if not force_delete_plannings:
+                    # Eindeutige KW-Nummern extrahieren
+                    weeks = sorted(list({
+                        (p["start_date"] if isinstance(p, dict) else p[0]).isocalendar()[1]
+                        for p in plannings
+                    }))
+                    weeks_str = ", ".join(map(str, weeks))
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"PLANNING_CONFLICT:Für die Rolle {role} existieren Planungen für diese Kalenderwochen: {weeks_str}. Sollen diese Planungen enfernt werden?"
+                    )
+                else:
+                    # Planungen löschen, da force_delete_plannings=True
+                    cur.execute(
+                        "DELETE FROM planning WHERE staff = %s AND role_id = %s",
+                        (shortname, role_id)
+                    )
+
         try:
             # Nutze einen SAVEPOINT, da ein fehlgeschlagenes DELETE in PostgreSQL
             # sonst die gesamte laufende Transaktion ungültig macht!
@@ -173,7 +208,7 @@ def update_staff(shortname: str, data: StaffUpdate):
         """, (new_hpw, new_hpd, new_remark, new_active, shortname))
 
         if data.roles is not None:
-            _sync_roles(cur, shortname, data.roles)
+            _sync_roles(cur, shortname, data.roles, data.force_delete_plannings)
 
         return {"shortname": shortname}
 

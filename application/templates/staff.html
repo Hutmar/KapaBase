@@ -201,7 +201,7 @@
         document.getElementById('modal-backdrop').classList.remove('open');
     }
 
-    async function saveStaff() {
+    async function saveStaff(forceDelete = false) {
         const alert = document.getElementById('modal-alert');
         const roles = [];
         if (document.getElementById('role-dev').checked)  roles.push('Developer');
@@ -216,6 +216,7 @@
             remark:         document.getElementById('f-remark').value.trim()||null,
             is_active:      document.getElementById('f-active').checked,
             roles,
+            force_delete_plannings: forceDelete
         };
 
         try {
@@ -228,7 +229,15 @@
             toast('Gespeichert');
             loadStaff();
         } catch(e) {
-            alert.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            if (e.message && e.message.startsWith("PLANNING_CONFLICT:")) {
+                const promptMessage = e.message.replace("PLANNING_CONFLICT:", "");
+                if (confirm(promptMessage)) {
+                    // Wenn der Nutzer "Ja" (OK) klickt, rufen wir saveStaff erneut mit forceDelete = true auf[cite: 1, 3]
+                    saveStaff(true);
+                }
+            } else {
+                alert.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+            }
         }
     }
 
