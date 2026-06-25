@@ -132,23 +132,6 @@
         transparent 4px, transparent 8px
     );
 }
-/* Planungs-Chip in Woche mit ≥ 3 Abwesenheitstagen */
-.planning-cell.partial-week {
-    opacity: 0.52;
-    position: relative;
-}
-.planning-cell.partial-week::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: 3px;
-    background: repeating-linear-gradient(
-        -45deg,
-        transparent, transparent 3px,
-        rgba(0,0,0,0.20) 3px, rgba(0,0,0,0.20) 4px
-    );
-    pointer-events: none;
-}
 .cell-items-wrap {
     display: flex;
     gap: 2px;
@@ -531,25 +514,22 @@ function renderMatrix() {
                 return;
             }
 
-            const partialClass = (absInfo && absInfo.absent_days > 0 && !absInfo.is_majority) ? ' partial-absent-cell' : '';
+            const partialClass = (absInfo && absInfo.absent_days > 0) ? ' partial-absent-cell' : '';
             const capHours     = (capData.week_hours || {})[wk] || 0;
             const mon   = weekMonday(wk);
             const fri   = weekFriday(wk);
             const tooltip = `KW ${parseInt(wk.split('-W')[1])}: ${fmtDate(mon)}–${fmtDate(fri)} | Kap: ${Math.round(capHours*10)/10}h`
                           + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
-            const chipMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
-            const isPartialWeek = !!(absInfo && absInfo.is_partial);
+            const itemMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
             const chips = weekItems.map(pl => {
-                const label   = esc(pl.task_name || pl.project_name || '?');
-                const color   = pl.task_color || pl.project_color || '#555';
-                const txtCol  = contrastColor(color);
+                const label    = esc(pl.task_name || pl.project_name || '?');
+                const color    = pl.task_color || pl.project_color || '#555';
+                const txtCol   = contrastColor(color);
                 const outdated = pl.is_outdated ? ' outdated' : '';
-                const partial  = isPartialWeek ? ' partial-week' : '';
-                const pTitle   = isPartialWeek ? ` (\u26a0 ${absInfo.absent_days}\u00a0von\u00a0${absInfo.total_days} Tagen abwesend \u2013 Stunden entsprechend reduziert)` : '';
-                return `<div class="planning-cell${outdated}${partial}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth};display:inline-flex;align-items:center;justify-content:flex-start;" title="${label}${pTitle}">
-  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;width:100%;padding-left:2px;">${label}</span>
-</div>`;
+                return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}">
+                    <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
+                </div>`;
             }).join('');
 
             row += `<td class="droptarget${partialClass}" title="${tooltip}"><div class="cell-items-wrap">${chips}</div></td>`;

@@ -127,6 +127,23 @@ rgba(42,48,80,0.2), rgba(42,48,80,0.2) 4px,
 transparent 4px, transparent 8px
 );
 }
+/* Planungs-Chip in Woche mit ≥ 3 Abwesenheitstagen */
+.planning-cell.partial-week {
+opacity: 0.52;
+position: relative;
+}
+.planning-cell.partial-week::after {
+content: '';
+position: absolute;
+inset: 0;
+border-radius: 3px;
+background: repeating-linear-gradient(
+  -45deg,
+  transparent, transparent 3px,
+  rgba(0,0,0,0.20) 3px, rgba(0,0,0,0.20) 4px
+);
+pointer-events: none;
+}
 .cell-items-wrap {
 display: flex;
 gap: 2px;
@@ -832,28 +849,31 @@ ordered.forEach(sr => {
       return;
     }
 
-    const partialClass = (absInfo && absInfo.absent_days > 0) ? ' partial-absent-cell' : '';
+    const partialClass = (absInfo && absInfo.absent_days > 0 && !absInfo.is_majority) ? ' partial-absent-cell' : '';
     const mon   = weekMonday(wk);
     const fri   = weekFriday(wk);
     const tooltip = `KW ${parseInt(wk.split('-W')[1])}: ${fmtDate(mon)}–${fmtDate(fri)} | Kap: ${Math.round(capHours*10)/10}h`
                   + (absInfo ? ` (${absInfo.absent_days} T. abw.)` : '');
 
-    const itemMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
-    const chips = weekItems.map(pl => {
-      const label    = esc(pl.task_name || pl.project_name || '?');
-      const color    = pl.task_color || pl.project_color || '#555';
-      const txtCol   = contrastColor(color);
-      const pid      = pl.project_id != null ? pl.project_id : 'null';
-      const tid      = pl.task_id    != null ? pl.task_id    : 'null';
-      const planId   = pl.planning_id != null ? pl.planning_id : 'null';
-      const outdated = pl.is_outdated ? ' outdated' : '';
-      const oTitle   = pl.is_outdated ? ' (veraltet – neuere Buchungen vorhanden)' : '';
-      return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}${oTitle}">
-        <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
-        <button class="remove-btn"
-          onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>
-      </div>`;
-    }).join('');
+      const itemMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
+      const isPartialWeek = !!(absInfo && absInfo.is_partial);
+      const chips = weekItems.map(pl => {
+        const label    = esc(pl.task_name || pl.project_name || '?');
+        const color    = pl.task_color || pl.project_color || '#555';
+        const txtCol   = contrastColor(color);
+        const pid      = pl.project_id != null ? pl.project_id : 'null';
+        const tid      = pl.task_id    != null ? pl.task_id    : 'null';
+        const planId   = pl.planning_id != null ? pl.planning_id : 'null';
+        const outdated = pl.is_outdated ? ' outdated' : '';
+        const partial  = isPartialWeek ? ' partial-week' : '';
+        const oTitle   = pl.is_outdated ? ' (veraltet \u2013 neuere Buchungen vorhanden)' : '';
+        const pTitle   = isPartialWeek ? ` (\u26a0 ${absInfo.absent_days}\u00a0von\u00a0${absInfo.total_days} Tagen abwesend \u2013 Stunden entsprechend reduziert)` : '';
+        return `<div class="planning-cell${outdated}${partial}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}${oTitle}${pTitle}">
+          <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
+          <button class="remove-btn"
+            onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>
+        </div>`;
+      }).join('');
 
     // "+"-Button: nur anzeigen, wenn in dieser Zelle/Rolle genau eine
     // Zuweisung existiert (max. 2 Projekte pro Mitarbeiter/Rolle/KW).
@@ -1201,10 +1221,15 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
                  + `Geplant vor aktueller KW: ${Math.round(p.planned_prev_test)}h\n`
                  + `Geplant ab aktueller KW: ${Math.round(p.planned_cur_test)}h`;
 
-  return `<tr style="background:${bgColor}">
+return `<tr style="background:${bgColor}">
     <td>
       <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-      <strong>${esc(p.project_name)}</strong>
+      <a href="/projects?edit=${p.project_id}" target="_blank" 
+         style="color: inherit; text-decoration: none;" 
+         onmouseover="this.style.textDecoration='underline'" 
+         onmouseout="this.style.textDecoration='none'">
+        <strong>${esc(p.project_name)}</strong>
+      </a>
     </td>
     <td class="text-dim">${esc(p.customer)}</td>
     <td class="text-mono">${Math.round(p.target_hours)}h</td>

@@ -434,8 +434,8 @@ function renderProjects(projects) {
   <td class="text-mono">${p.target_hours}</td>
   <td class="detail-col text-mono">${p.impl_hours}</td>
   <td class="detail-col text-mono">${p.test_hours}</td>
-  <td><input type="checkbox" ${p.planned?'checked':''} onchange="quickUpdate(${p.project_id},'planned',this.checked)" style="width:auto"></td>
-  <td class="detail-col"><input type="checkbox" ${p.done?'checked':''} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
+  <td><input type="checkbox" ${p.planned?'checked':''} ${hasEditRights ? '' : 'disabled'} onchange="quickUpdate(${p.project_id},'planned',this.checked)" style="width:auto"></td> <td class="detail-col">
+      <input type="checkbox" ${p.done?'checked':''} ${hasEditRights ? '' : 'disabled'} onchange="quickUpdate(${p.project_id},'done',this.checked)" style="width:auto"></td>
   <td class="detail-col text-dim nowrap">${p.start_date||'–'}</td>
   <td class="detail-col text-dim nowrap">${p.due_date||'–'}</td>
   <td class="text-mono" style="font-weight:600">${getWeekNumber(p.due_date)}</td>
@@ -579,6 +579,7 @@ function dragOver(e) {
   e.dataTransfer.dropEffect = 'move';
 }
 async function drop(e) {
+  if (!hasEditRights) return;
   e.preventDefault();
   const targetId = parseInt(e.currentTarget.dataset.id);
   if (dragSrcId === targetId) return;
@@ -787,6 +788,16 @@ async function applySync() {
 document.addEventListener('DOMContentLoaded', () => {
   loadJiraConfig();
   loadProjects();
+  const urlParams = new URLSearchParams(window.location.search);
+  const editId = urlParams.get('edit');
+  
+  if (hasEditRights && editId) {
+    // Da loadProjects() asynchron läuft, warten wir kurz, bis die Projekte 
+    // im 'allProjects'-Array geladen sind, bevor wir das Modal öffnen.
+    setTimeout(() => {
+      openModal(parseInt(editId));
+    }, 200); // 200ms reichen meistens völlig aus
+  }
 });
 </script>
 {% endblock %}
