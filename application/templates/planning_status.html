@@ -13,10 +13,20 @@
     background: var(--bg2);
     border-bottom: 2px solid var(--border);
     overflow-x: hidden;
+    cursor: grab;
+}
+#planning-header-wrap.is-dragging {
+    cursor: grabbing;
+    user-select: none;
 }
 #planning-body-wrap {
     overflow-x: auto;
     margin-bottom: 24px;
+    cursor: grab;
+}
+#planning-body-wrap.is-dragging {
+    cursor: grabbing;
+    user-select: none;
 }
 .planning-header-table,
 .planning-body-table {
@@ -427,7 +437,7 @@ function renderMatrix() {
 
     const today    = new Date();
     const todayIso = getIsoWeek(today);
-    const currentWk = `${todayIso.year}-W${String(todayIso.week).padStart(2,'0')}`;
+    const currentWk = `${todayIso.year}-W${String(todayIso.week).padStart(2,'00')}`;
 
     const COL_STAFF = 160;
     const COL_KW    = 90;
@@ -541,9 +551,9 @@ function renderMatrix() {
             const chipMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
             const isPartialWeek = !!(absInfo && absInfo.is_partial);
             const chips = weekItems.map(pl => {
-                const label   = esc(pl.task_name || pl.project_name || '?');
-                const color   = pl.task_color || pl.project_color || '#555';
-                const txtCol  = contrastColor(color);
+                const label  = esc(pl.task_name || pl.project_name || '?');
+                const color  = pl.task_color || pl.project_color || '#555';
+                const txtCol = contrastColor(color);
                 const outdated = pl.is_outdated ? ' outdated' : '';
                 const partial  = isPartialWeek ? ' partial-week' : '';
                 const pTitle   = isPartialWeek ? ` (\u26a0 ${absInfo.absent_days}\u00a0von\u00a0${absInfo.total_days} Tagen abwesend \u2013 Stunden entsprechend reduziert)` : '';
@@ -594,6 +604,8 @@ function renderMatrix() {
     const bodyWrap   = document.getElementById('planning-body-wrap');
     const headerWrap = document.getElementById('planning-header-wrap');
     bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
+    initDragScroll('planning-body-wrap');
+    initDragScroll('planning-header-wrap', 'planning-body-wrap');
 }
 
 function renderDragSources() { }
@@ -628,6 +640,73 @@ function closeAssignModal() { document.getElementById('assign-modal')?.classList
 async function confirmAssign() { toast('Zuweisung in dieser Ansicht nicht möglich (schreibgeschützt).', 'error'); }
 function highlightActiveDropdownItem() { }
 function renderDropdownItems() { }
+
+// ── Drag-to-Scroll für Planungsmatrix ─────────────────────────────────────────
+// wrapperId      – das Element, auf dem der Mausdown registriert wird
+// scrollTargetId – das Element, dessen scrollLeft verändert wird
+//                  (wenn weggelassen = wrapperId selbst; nützlich für den
+//                   Header-Wrap, der overflow:hidden hat und dessen Scroll
+//                   stattdessen über den Body-Wrap laufen soll)
+function initDragScroll(wrapperId, scrollTargetId) {
+    const el       = document.getElementById(wrapperId);
+    const scrollEl = scrollTargetId ? document.getElementById(scrollTargetId) : el;
+    if (!el || !scrollEl) return;
+
+    // Bestehende Listener entfernen (falls renderMatrix() mehrfach aufgerufen wird)
+    if (el._dragScrollCleanup) el._dragScrollCleanup();
+
+    let isDown = false;
+    let startX = 0;
+    let scrollStart = 0;
+    let didDrag = false;
+
+    const onMouseDown = (e) => {
+        // Nur linke Maustaste; Buttons, Links und interaktive Elemente ausschließen
+        if (e.button !== 0) return;
+        if (e.target.closest('button, a, input, select, .cell-dropdown')) return;
+        isDown = true;
+        didDrag = false;
+        startX = e.pageX;
+        scrollStart = scrollEl.scrollLeft;
+        el.classList.add('is-dragging');
+        e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+        if (!isDown) return;
+        const dx = e.pageX - startX;
+        if (Math.abs(dx) > 3) didDrag = true;
+        scrollEl.scrollLeft = scrollStart - dx;
+    };
+
+    const onMouseUp = () => {
+        if (!isDown) return;
+        isDown = false;
+        el.classList.remove('is-dragging');
+    };
+
+    // Verhindert versehentliche Klick-Aktionen nach einem Drag
+    const onClickCapture = (e) => {
+        if (didDrag) {
+            e.stopPropagation();
+            didDrag = false;
+        }
+    };
+
+    el.addEventListener('mousedown', onMouseDown);
+    el.addEventListener('click', onClickCapture, true);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    // Cleanup-Funktion speichern, damit sie beim nächsten renderMatrix()-Aufruf
+    // die alten Listener entfernen kann
+    el._dragScrollCleanup = () => {
+        el.removeEventListener('mousedown', onMouseDown);
+        el.removeEventListener('click', onClickCapture, true);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    };
+}
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
 function contrastColor(hex) {
