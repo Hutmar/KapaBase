@@ -14,12 +14,12 @@
           "projects": ["KapaBase"],
           "import_query": "project in (KapaBase) AND issuetype = Epic AND status != Done ORDER BY created DESC",
           "field_mapping": {
-            "summary":          "project_name",
-            "description":      "remarks",
-            "duedate":          "due_date",
+            "summary":           "project_name",
+            "description":       "remarks",
+            "duedate":           "due_date",
             "customfield_10015": "start_date",
-            "Customer": 		"customer",
-            "status":           "_jira_status"
+            "Customer":          "customer",
+            "status":            "_jira_status"
           },
           "status_mapping": {
             "To Do":       { "planned": true,  "done": false },
@@ -32,6 +32,23 @@
             "planned":      true,
             "done":         false
           }
+        },
+        "notification": {
+          "enabled": true,
+          "schedule": "0 7 * * 1",
+          "smtp": {
+            "host": "smtp.example.com",
+            "port": 587,
+            "use_tls": true,
+            "username": "noreply@example.com",
+            "password": "SECRET"
+          },
+          "from": "KapaBase Sync <noreply@example.com>",
+          "to": [
+            "projektleitung@example.com"
+          ],
+          "subject": "Jira-Sync Bericht – {date}",
+          "only_if_changes": true
         }
       }
     ]

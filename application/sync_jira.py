@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import base64
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -67,19 +68,26 @@ class JiraSyncAdapter(SyncAdapter):
         self.api_key        = jira_cfg["api_key"]
         self.email          = jira_cfg["email"]
         
-        # KORREKTUR: Diese Konfigurationsattribute wurden wieder hinzugefügt
         self.projects       = jira_cfg.get("projects", [])
         self.import_query   = jira_cfg.get("import_query", "")
         self.field_mapping: dict[str, str]   = jira_cfg.get("field_mapping", {})
         self.status_mapping: dict[str, dict] = jira_cfg.get("status_mapping", {})
         self.defaults: dict                  = jira_cfg.get("defaults", {})
 
-        # API-Version konfigurierbar: "3" für Jira Cloud (Default), "2" für Jira Server
+        # API-Version: "3" für Jira Cloud, "2" für Jira Server
         self.api_version = str(jira_cfg.get("api_version", "3"))
 
-        # Authentifizierung über den Headers-Parameter für Bearer Token
-        self._auth_headers = {"Authorization": f"Bearer {self.api_key}"}
-
+        # Dynamische Authentifizierung je nach Jira-Typ
+        self._auth_headers = {}
+        if self.api_version == "3":
+            # Jira Cloud benötigt: Basic base64(email:api_key)
+            auth_str = f"{self.email}:{self.api_key}"
+            auth_b64 = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
+            self._auth_headers["Authorization"] = f"Basic {auth_b64}"
+        else:
+            # Jira Server nutzt das neu eingerichtete Bearer Token
+            self._auth_headers["Authorization"] = f"Bearer {self.api_key}"
+            
     # ── HTTP-Hilfsmethoden ─────────────────────────────────────────────────────
 
     def _get(self, path: str, params: dict | None = None) -> dict:
@@ -257,6 +265,13 @@ class JiraSyncAdapter(SyncAdapter):
                 merged = {**dict(proj), **new_data}
                 diffs.append(RecordDiff(change_type=ChangeType.UPDATE, external_id=jira_key, record_id=proj["project_id"], display_name=new_data.get("project_name", proj["project_name"]), changes=field_changes, raw_external=issue, merged_payload=merged))
             else:
+                logger.info(
+                    "[Jira] Unchanged project: %s (Name: %s, Soll-Stunden: %s, Typ: %s)",
+                    jira_key,
+                    proj.get("project_name"),
+                    proj.get("target_hours"),
+                    proj.get("project_type")
+                )
                 diffs.append(RecordDiff(change_type=ChangeType.SKIP, external_id=jira_key, record_id=proj["project_id"], display_name=proj["project_name"]))
         if self.import_query:
             try:

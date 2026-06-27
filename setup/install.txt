@@ -1,6 +1,7 @@
 sudo apt update
 sudo apt install uvicorn
 sudo apt install python3-fastapi python3-uvicorn python3-psycopg2 python3-jinja2 python3-matplotlib python3-holidays
+sudo apt install python3-apscheduler
 
 # 1. Den Benutzer "planning" mit Passwort "planning" anlegen
 sudo -u postgres createuser planning --pwprompt
