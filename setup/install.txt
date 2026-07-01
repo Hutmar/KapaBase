@@ -10,3 +10,6 @@ sudo -u postgres createuser planning --pwprompt
 sudo -u postgres createdb -O planning planning
 
 psql -U planning -d planning -f database.sql
+
+sudo systemctl restart kapaBase.service
+sudo journalctl -u kapaBase.service -n 100 --no-pager
