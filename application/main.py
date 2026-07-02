@@ -26,18 +26,11 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[logging.StreamHandler()]
-    )
-    
-    logging.getLogger("sync_jira").setLevel(logging.INFO)
-    
     """Startet den Hintergrund-Scheduler beim App-Start und stoppt ihn beim Beenden."""   
     try:
         start_scheduler()
     except Exception as exc:
+        print("Kann scheduler nicht starten!")
         logger.error("Fehler beim Starten des Schedulers: %s", exc)
     yield
     stop_scheduler()

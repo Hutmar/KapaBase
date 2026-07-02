@@ -1,0 +1,52 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "simple": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        }
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+            "stream": "ext://sys.stdout"
+        }
+    },
+    "loggers": {
+        "uvicorn": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "uvicorn.error": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "uvicorn.access": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "main": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": true
+        },
+        "sync_jira": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": true
+        },
+        "sync_engine": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": true
+        }
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO"
+    }
+}
