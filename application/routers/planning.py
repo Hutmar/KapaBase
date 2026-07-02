@@ -1,23 +1,6 @@
 # routers/planning.py
 """
 routers/planning.py – Ressourcenzuordnung (Tabelle: planning)
-
-DB-Schema:
-planning(planning_id, task_id, project_id, staff, role_id, variant_id, start_date date, end_date date)
-– start_date/end_date = Montag/Freitag der zugewiesenen Kalenderwoche
-  (bzw. ein Teilbereich davon, siehe unten)
-– Stunden werden NICHT gespeichert; sie ergeben sich aus staff.hours_per_day
-  multipliziert mit den effektiven Arbeitstagen (abzgl. Feiertage + Abwesenheiten)
-
-Zwei Projekte pro Mitarbeiter/Rolle/KW:
-– Wird einem Mitarbeiter ein zweites Projekt für dieselbe Kalenderwoche
-  zugewiesen, wird die Woche aufgeteilt: der bestehende Eintrag wird auf
-  Montag–Mittwoch verkürzt, der neue Eintrag erhält Donnerstag–Freitag.
-– Wird einer der beiden Einträge wieder gelöscht, wird der verbleibende
-  Eintrag wieder auf die volle Woche (Montag–Freitag) ausgedehnt.
-– Die Stundenberechnung (Liefertermin/Restaufwand) berücksichtigt diese
-  Aufteilung: pro Eintrag werden nur die Arbeitsstunden des tatsächlichen
-  Datumsbereichs (start_date–end_date) angerechnet, nicht die volle KW.
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -119,41 +102,18 @@ def _is_majority_absent(shortname: str, week_key: str,
                         absences: list, at_hols: Set[date]) -> bool:
     """
     True wenn der Mitarbeiter ALLE Arbeitstage der KW abwesend ist.
-
-    Geändert gegenüber ursprünglicher Implementierung:
-    – Früher: blockiert bei > 50 % Abwesenheit (≥ 3 von 5 Tagen)
-    – Jetzt:  blockiert nur noch bei 100 % Abwesenheit (alle Arbeitstage)
-      → Zuweisungen sind auch bei 4 von 5 Abwesenheitstagen möglich.
-      Die Stundenberechnung via _effective_hours_in_date_range() berücksichtigt
-      die tatsächlichen Anwesenheitstage bereits korrekt.
     """
     total  = _total_workdays_in_week(week_key, at_hols)
     if total == 0:
         return True
     absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
-    # Nur blockieren wenn wirklich ALLE Arbeitstage abwesend
     return absent >= total
 
 def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
                                    range_start: date, range_end: date,
                                    absences: list, at_hols: Set[date]) -> float:
     """
-    Effektive Stunden des Mitarbeiters im angegebenen Datumsbereich (inkl.
-    beider Enden): hours_per_day × (Arbeitstage im Bereich − Abwesenheitstage
-    im Bereich).
-
-    Wird für Planungseinträge verwendet, die nicht zwingend eine volle
-    Kalenderwoche abdecken – z.B. wenn einem Mitarbeiter zwei Projekte in
-    derselben KW zugewiesen sind und die Woche dadurch in Mo–Mi / Do–Fr
-    aufgeteilt wurde. _effective_hours_in_week() deckt den Sonderfall
-    „ganze Woche" ab und ruft intern diese Funktion auf.
-
-    Nachträgliche Abwesenheiten: Da diese Funktion die Abwesenheiten immer
-    aus der frisch übergebenen Liste liest (die ihrerseits bei jedem API-
-    Aufruf neu aus der DB geladen wird), werden nachträglich eingetragene
-    Abwesenheiten für bestehende Planungen automatisch korrekt berücksichtigt –
-    die Stunden sinken entsprechend, ohne dass die Planungseinträge selbst
-    geändert werden müssen.
+    Effektive Stunden des Mitarbeiters im angegebenen Datumsbereich.
     """
     if range_end < range_start:
         return 0.0
@@ -181,11 +141,6 @@ def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
 
 def _effective_hours_in_week(shortname: str, hours_per_day: float,
                              week_key: str, absences: list, at_hols: Set[date]) -> float:
-    """
-    Effektive Stunden des Mitarbeiters in der vollen KW (Mo–Fr):
-    hours_per_day × (Arbeitstage − Abwesenheitstage).
-    Delegiert an _effective_hours_in_date_range() mit den Wochengrenzen.
-    """
     monday, friday = _week_bounds(week_key)
     return _effective_hours_in_date_range(shortname, hours_per_day, monday, friday, absences, at_hols)
 
@@ -215,32 +170,19 @@ def get_planning(
 ):
     """
     Vollständige Planungsmatrix.
-
-    Startzeitpunkt:
-    • use_current_week=True  → aktuelle KW
-    • use_current_week=False → min(project.start_date) der geplanten, nicht
-      erledigten Projekte; Fallback: aktuelle KW
-
-    Endzeitpunkt: max(project.due_date) der geplanten, nicht erledigten Projekte;
-    Fallback: 12 KW nach Start.
-
-    variant_id: optional; wenn nicht angegeben, wird die aktive Variante verwendet.
     """
     with get_cursor() as cur:
 
-        # ── Variante auflösen ────────────────────────────────────────────────
         resolved_variant_id = _resolve_variant_id(cur, variant_id)
 
         cur.execute("SELECT variant_id, variant_name, is_active, created_at FROM planning_variant WHERE variant_id = %s",
                     (resolved_variant_id,))
         variant_info = dict(cur.fetchone())
 
-        # Initialisiere Sets für effektive IDs
         effective_project_ids_set: Set[int] = set()
         effective_task_ids_set: Set[int] = set()
         filter_title_parts: List[str] = []
 
-        # 1. IDs direkt aus Parametern parsen
         if filter_project_ids:
             try:
                 for _id_str in filter_project_ids.split(','):
@@ -256,7 +198,6 @@ def get_planning(
             except ValueError:
                 raise HTTPException(422, f"Ungültige Task-ID(s): {filter_task_ids}")
 
-        # 2. Namen zu IDs auflösen
         if filter_project_names:
             names_to_search = tuple([name.strip() for name in filter_project_names.split(',') if name.strip()])
             if names_to_search:
@@ -286,7 +227,6 @@ def get_planning(
            (not effective_project_ids and not effective_task_ids):
             raise HTTPException(404, "Die angegebenen Projekte/Tasks konnten nicht gefunden werden oder existieren nicht.")
 
-        # Ermittle zugehörige Projekt-IDs von gefilterten Tasks
         task_project_ids_set: Set[int] = set()
         if effective_task_ids:
             cur.execute("SELECT DISTINCT project_id FROM tasks WHERE task_id = ANY(%s) AND project_id IS NOT NULL", (effective_task_ids,))
@@ -295,11 +235,9 @@ def get_planning(
 
         all_relevant_project_ids = list(effective_project_ids_set.union(task_project_ids_set))
 
-        # ── Filter-Flag: wurde mit Projekt- oder Task-Filter aufgerufen? ─────
         has_any_filter = bool(effective_project_ids_set or effective_task_ids_set)
         filtered_status_project_ids: Set[int] = effective_project_ids_set.union(task_project_ids_set)
 
-        # ── Zeitbereich aus Projektdaten ─────────────────────────────────────
         range_query_sql = """
             SELECT MIN(start_date) AS min_start,
                    MAX(due_date)   AS max_due
@@ -367,7 +305,6 @@ def get_planning(
         else:
             end_date = start_date + timedelta(weeks=12)
 
-        # ── Mitarbeiter mit Developer/Tester-Rolle ──────────────────────────
         cur.execute("""
             SELECT s.shortname, s.hours_per_day, s.is_active,
                    r.role, r.role_id
@@ -380,7 +317,6 @@ def get_planning(
         staff_roles = cur.fetchall()
         shortnames = list({r["shortname"] for r in staff_roles})
 
-        # ── Abwesenheiten im Zeitraum ───────────────────────────────────────
         if shortnames:
             cur.execute("""
                 SELECT shortname, absence_from, absence_to, absence_type
@@ -394,7 +330,6 @@ def get_planning(
             absences = []
         absences_list = [dict(a) for a in absences]
 
-        # ── Bestehende Planungen laden (gefiltert nach variant_id) ──────────
         sql_plannings = """
             SELECT pl.planning_id, pl.task_id, pl.project_id, pl.staff, pl.role_id,
                    pl.start_date, pl.end_date, pl.variant_id,
@@ -430,7 +365,6 @@ def get_planning(
         if not plannings_raw and (effective_project_ids or effective_task_ids):
             raise HTTPException(404, "Für die angegebenen Projekte/Tasks wurde keine Planung im sichtbaren Zeitraum gefunden.")
 
-        # ── Verfügbare Projekte ──────────────────────────────────────────────
         sql_all_projects = """
             SELECT p.project_id, p.project_name, p.customer, p.color_hexcode,
                    p.start_date, p.due_date, p.target_hours, p.impl_hours, p.test_hours,
@@ -448,14 +382,12 @@ def get_planning(
         cur.execute(sql_all_projects, params_all_projects)
         all_projects_filtered = cur.fetchall()
 
-        # Letztes worked_hours-Datum je Projekt
         cur.execute("""
             SELECT project_id, MAX(day) AS max_day
             FROM worked_hours GROUP BY project_id
         """)
         max_worked_day = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
 
-        # ── Verfügbare Tasks ─────────────────────────────────────────────────
         sql_available_tasks = """
             SELECT t.task_id, t.task_name, t.color_hexcode, t.project_id,
                    p.project_name
@@ -479,10 +411,8 @@ def get_planning(
         cur.execute(sql_available_tasks, params_available_tasks)
         available_tasks = cur.fetchall()
 
-        # ── Feiertage ────────────────────────────────────────────────────────
         at_hols = _build_at_hols(start_date, end_date)
 
-        # ── Kalenderwochen-Liste ─────────────────────────────────────────────
         weeks: List[str] = []
         cur_d = start_date
         while cur_d <= end_date:
@@ -491,14 +421,6 @@ def get_planning(
                 weeks.append(wk)
             cur_d += timedelta(days=7)
 
-        # ── Abwesenheits-Map ─────────────────────────────────────────────────
-        # Felder je KW:
-        #   absent_days   – Anzahl abwesender Arbeitstage
-        #   total_days    – Gesamtzahl Arbeitstage in der KW
-        #   is_majority   – True wenn ALLE Arbeitstage abwesend (= Zuweisung gesperrt)
-        #   is_partial    – True wenn ≥ 3 Tage abwesend aber nicht alle
-        #                   (= Zuweisung erlaubt, aber optisch hervorgehoben)
-        #   type          – Abwesenheitstyp (für Tooltip)
         absence_map: dict = {}
         for sr in staff_roles:
             name = sr["shortname"]
@@ -518,8 +440,8 @@ def get_planning(
                         ab_type = ab["absence_type"]
                         break
 
-                is_majority = absent_days >= total_days  # blockiert nur noch bei 100 %
-                is_partial  = (not is_majority) and (absent_days >= 3)  # ≥ 3 Tage → optische Warnung
+                is_majority = absent_days >= total_days
+                is_partial  = (not is_majority) and (absent_days >= 3)
 
                 absence_map[name][wk] = {
                     "absent_days": absent_days,
@@ -529,7 +451,6 @@ def get_planning(
                     "type":        ab_type,
                 }
 
-        # ── Kapazität pro Mitarbeiter + KW ───────────────────────────────────
         capacity_by_staff: dict = {}
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}
 
@@ -546,11 +467,9 @@ def get_planning(
                 "week_hours":    week_hours,
             }
 
-        # ── end_week: Enddatum begrenzen ─────────────────────────────────────
         if end_week:
             weeks = [wk for wk in weeks if wk <= end_week]
 
-        # ── Outdated-Flag in plan_map ─────────────────────────────────────────
         plan_map: dict = {}
         for pl in plannings_raw:
             wk    = iso_week_key(pl["start_date"])
@@ -564,7 +483,6 @@ def get_planning(
             )
             plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(entry)
 
-        # ── Ist-Liefertermin je KW (für die Liefertermin-Zeile) ──────────────
         cur.execute("""
             SELECT pl.project_id,
                    pl.staff, pl.start_date, pl.end_date,
@@ -615,7 +533,6 @@ def get_planning(
         cur.execute(status_project_sql, status_project_params)
         projects_for_status = {r["project_id"]: dict(r) for r in cur.fetchall()}
 
-    # ── Ist-Liefertermin berechnen (außerhalb des Cursor-Blocks) ─────────────
     at_hols_status = _build_at_hols(
         min((r["start_date"] for r in plan_rows_status), default=date.today()),
         max((r["end_date"]   for r in plan_rows_status), default=date.today()) + timedelta(weeks=12)
@@ -623,12 +540,21 @@ def get_planning(
 
     plan_agg_status: dict = {}
     last_end_map_status: dict = {}
+    
+    # KORREKTUR: Ermittle die absolut letzte Planungs-KW für das Projekt, sofern sie >= der aktuellen Woche ist
+    max_valid_future_date: dict = {}
 
     for pr in plan_rows_status:
         pid = pr["project_id"]
 
         if has_any_filter and pid not in filtered_status_project_ids:
             continue
+
+        # Für die Ermittlung, ob Planungen in dieser Woche oder später existieren:
+        if pr["end_date"] >= cur_monday:
+            prev_f = max_valid_future_date.get(pid)
+            if prev_f is None or pr["end_date"] > prev_f:
+                max_valid_future_date[pid] = pr["end_date"]
 
         last_worked_day = max_worked_day.get(pid)
         if last_worked_day is not None and pr["end_date"] <= last_worked_day:
@@ -658,7 +584,13 @@ def get_planning(
         diff = remaining_impl + remaining_test
 
         if diff <= 0 or (0 < diff < 15):
-            base_date = last_end_map_status.get(pid, date.today())
+            # KORREKTUR-LOGIK ANWENDEN:
+            # Wenn es Planungen in dieser Woche oder später gibt, nimm deren Folgewoche.
+            if pid in max_valid_future_date:
+                base_date = max_valid_future_date[pid]
+            else:
+                base_date = last_end_map_status.get(pid, date.today())
+                
             ist_kw = _next_week_key(base_date)
             if ist_kw not in ist_kw_map:
                 ist_kw_map[ist_kw] = []
@@ -687,22 +619,6 @@ def get_planning(
 
 @router.post("/assign")
 def assign_planning(data: PlanningEntry):
-    """
-    Projekt oder Task einem Mitarbeiter für eine KW zuweisen.
-
-    Pro Mitarbeiter/Rolle/Kalenderwoche sind maximal zwei Zuweisungen möglich:
-    – 1. Zuweisung: belegt die gesamte Woche (Montag–Freitag).
-    – 2. Zuweisung: die bestehende Zuweisung wird auf Montag–Mittwoch
-         verkürzt, die neue Zuweisung erhält Donnerstag–Freitag.
-    – Eine 3. Zuweisung in derselben Woche wird abgelehnt.
-
-    Abwesenheits-Prüfung:
-    – Gesperrt nur noch wenn der Mitarbeiter ALLE Arbeitstage der KW abwesend ist.
-    – Bei 1–4 Abwesenheitstagen ist die Zuweisung erlaubt; die effektiven
-      Stunden werden via _effective_hours_in_date_range() korrekt reduziert.
-
-    variant_id: optional; wenn None → aktive Variante wird verwendet.
-    """
     if data.task_id is None and data.project_id is None:
         raise HTTPException(422, "task_id oder project_id muss angegeben sein")
 
@@ -717,6 +633,10 @@ def assign_planning(data: PlanningEntry):
             AND absence_to >= %s AND absence_from <= %s
         """, (data.staff, monday, friday))
         absences = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("SELECT hours_per_day FROM staff WHERE shortname = %s", (data.staff,))
+        staff_row = cur.fetchone()
+        hours_per_day = float(staff_row["hours_per_day"]) if staff_row else 0.0
 
     at_hols = _build_at_hols(monday, friday)
     if _is_majority_absent(data.staff, data.calendar_week, absences, at_hols):
@@ -742,12 +662,48 @@ def assign_planning(data: PlanningEntry):
 
         same_role_rows = [r for r in existing_rows if r["role_id"] == data.role_id]
 
+        duplicate = next(
+            (r for r in same_role_rows
+             if r["project_id"] == data.project_id and r["task_id"] == data.task_id),
+            None
+        )
+        if duplicate is not None:
+            if len(same_role_rows) == 1:
+                cur.execute("""
+                    UPDATE planning SET start_date = %s, end_date = %s
+                    WHERE planning_id = %s
+                """, (monday, friday, duplicate["planning_id"]))
+                return {"status": "ok", "planning_id": duplicate["planning_id"],
+                        "start_date": str(monday), "end_date": str(friday),
+                        "note": "Zuweisung bereits vorhanden – auf volle Woche ausgedehnt."}
+            return {"status": "ok", "planning_id": duplicate["planning_id"],
+                    "start_date": str(duplicate["start_date"]), "end_date": str(duplicate["end_date"]),
+                    "note": "Zuweisung bereits vorhanden – keine Änderung nötig."}
+
         if len(same_role_rows) >= 2:
             raise HTTPException(409,
                 "Für diese Woche sind bereits zwei Projekte zugewiesen – mehr ist nicht möglich")
 
         if len(same_role_rows) == 1:
             existing = same_role_rows[0]
+
+            second_hours = _effective_hours_in_date_range(
+                data.staff, hours_per_day, thursday, friday, absences, at_hols
+            )
+            if second_hours <= 0:
+                raise HTTPException(409,
+                    "Zweite Zuweisung nicht möglich – der Mitarbeiter ist an den "
+                    "verbleibenden Tagen (Do–Fr) vollständig abwesend (0 effektive Stunden)")
+
+            first_hours = _effective_hours_in_date_range(
+                data.staff, hours_per_day, monday, wednesday, absences, at_hols
+            )
+            if first_hours <= 0:
+                raise HTTPException(409,
+                    "Aufteilung der Woche nicht möglich – das bestehende Projekt würde "
+                    "auf den Zeitraum Mo–Mi verkürzt, an dem der Mitarbeiter vollständig "
+                    "abwesend ist (0 effektive Stunden)")
+                    
             cur.execute("""
                 UPDATE planning SET start_date = %s, end_date = %s
                 WHERE planning_id = %s
@@ -779,15 +735,6 @@ def assign_planning(data: PlanningEntry):
 
 @router.delete("/remove")
 def remove_planning(data: PlanningDelete):
-    """
-    Planungszuordnung entfernen.
-    Bevorzugt: direkte Löschung per planning_id.
-    Fallback: Löschung per staff + calendar_week (+ optionale project_id/task_id).
-
-    Wurde die Woche zuvor auf zwei Zuweisungen aufgeteilt (Mo–Mi / Do–Fr),
-    wird die verbleibende Zuweisung nach dem Löschen wieder auf die volle
-    Woche (Mo–Fr) ausgedehnt.
-    """
     with get_cursor(commit=True) as cur:
 
         deleted_row = None
@@ -853,9 +800,6 @@ def remove_planning(data: PlanningDelete):
 
 @router.get("/project_status")
 def project_planning_status(variant_id: Optional[int] = None):
-    """
-    Planungsstatus je aktivem Projekt (variant_id: optional, default = aktive Variante).
-    """
     with get_cursor() as cur:
 
         resolved_variant_id = _resolve_variant_id(cur, variant_id)

@@ -373,8 +373,13 @@ border-radius: var(--radius);
 background: var(--bg3);
 color: var(--text);
 font-size: 13px;
-width: 100%;
 box-sizing: border-box;
+}
+.status-filter-row {
+display: flex;
+align-items: center;
+gap: 14px;
+flex-wrap: wrap;
 margin-bottom: 10px;
 }
 .matrix-collapsed {
@@ -467,7 +472,14 @@ Anzahl Projekte:
 <!-- ── Planungsstatus ─────────────────────────────────────────────────────── -->
 <div class="card" style="margin-top:20px">
 <h2>Planungsstatus</h2>
-<input type="text" id="project-status-search" class="status-search-box" placeholder="Suche Projektname oder Kunde..." oninput="filterProjectStatus()">
+<div class="status-filter-row">
+<input type="text" id="project-status-search" class="status-search-box" style="width:220px"
+       placeholder="Suche Projektname oder Kunde..." oninput="filterProjectStatus()">
+<label class="flex-gap text-dim" style="font-size:12px;white-space:nowrap">
+<input type="checkbox" id="filter-unplanned" style="width:auto" onchange="filterProjectStatus()">
+Nicht vollständig verplant
+</label>
+</div>
 <div style="overflow-x:auto">
 <table class="proj-status-table" style="width:100%">
 <thead>
@@ -1191,12 +1203,22 @@ return rows;
 
 function filterProjectStatus(assignedProjectId = null, silent = false) {
 const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
+const onlyUnplanned = document.getElementById('filter-unplanned').checked;
 let rowsToRender = _allProjectStatusRows;
 
 if (searchTerm) {
-  rowsToRender = _allProjectStatusRows.filter(p =>
+  rowsToRender = rowsToRender.filter(p =>
     p.project_name.toLowerCase().includes(searchTerm) ||
     (p.customer && p.customer.toLowerCase().includes(searchTerm))
+  );
+}
+
+// "Nicht vollständig verplant": nur Projekte anzeigen, deren
+// Liefertermin Ist (noch) leer ist – d.h. status_color ist nicht
+// grün/hellgrün (kein showIst in der Anzeige).
+if (onlyUnplanned) {
+  rowsToRender = rowsToRender.filter(p =>
+    !(p.status_color === 'green' || p.status_color === 'lightgreen')
   );
 }
 
