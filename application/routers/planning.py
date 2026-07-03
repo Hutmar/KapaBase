@@ -161,18 +161,14 @@ def _next_week_key(base_date: date) -> str:
 @router.get("/")
 def get_planning(
     use_current_week: bool = False,
-    end_week: Optional[str] = None,          # Format: 'YYYY-WNN'
-    variant_id: Optional[int] = None,        # wenn None → aktive Variante
+    end_week: Optional[str] = None,
+    variant_id: Optional[int] = None,
     filter_project_ids:   Optional[str] = None,
     filter_project_names: Optional[str] = None,
     filter_task_ids:      Optional[str] = None,
     filter_task_names:    Optional[str] = None,
 ):
-    """
-    Vollständige Planungsmatrix.
-    """
     with get_cursor() as cur:
-
         resolved_variant_id = _resolve_variant_id(cur, variant_id)
 
         cur.execute("SELECT variant_id, variant_name, is_active, created_at FROM planning_variant WHERE variant_id = %s",
@@ -199,9 +195,9 @@ def get_planning(
                 raise HTTPException(422, f"Ungültige Task-ID(s): {filter_task_ids}")
 
         if filter_project_names:
-            names_to_search = tuple([name.strip() for name in filter_project_names.split(',') if name.strip()])
+            names_to_search = [name.strip() for name in filter_project_names.split(',') if name.strip()]
             if names_to_search:
-                cur.execute("SELECT project_id, project_name FROM project WHERE project_name ILIKE ANY(%s)", (list(names_to_search),))
+                cur.execute("SELECT project_id, project_name FROM project WHERE project_name ILIKE ANY(%s)", (names_to_search,))
                 found_projects = cur.fetchall()
                 if not found_projects:
                     raise HTTPException(404, f"Keine Projekte mit Namen gefunden: {filter_project_names}")
@@ -210,9 +206,9 @@ def get_planning(
                 filter_title_parts.append(f"Projekte: {', '.join([p['project_name'] for p in found_projects])}")
 
         if filter_task_names:
-            names_to_search = tuple([name.strip() for name in filter_task_names.split(',') if name.strip()])
+            names_to_search = [name.strip() for name in filter_task_names.split(',') if name.strip()]
             if names_to_search:
-                cur.execute("SELECT task_id, task_name FROM tasks WHERE task_name ILIKE ANY(%s)", (list(names_to_search),))
+                cur.execute("SELECT task_id, task_name FROM tasks WHERE task_name ILIKE ANY(%s)", (names_to_search,))
                 found_tasks = cur.fetchall()
                 if not found_tasks:
                     raise HTTPException(404, f"Keine Tasks mit Namen gefunden: {filter_task_names}")
@@ -224,7 +220,7 @@ def get_planning(
         effective_task_ids = list(effective_task_ids_set)
 
         if (filter_project_ids or filter_project_names or filter_task_ids or filter_task_names) and \
-           (not effective_project_ids and not effective_task_ids):
+                (not effective_project_ids and not effective_task_ids):
             raise HTTPException(404, "Die angegebenen Projekte/Tasks konnten nicht gefunden werden oder existieren nicht.")
 
         task_project_ids_set: Set[int] = set()
@@ -254,8 +250,8 @@ def get_planning(
         cur.execute(range_query_sql, range_query_params)
         range_row = cur.fetchone()
 
-        today      = date.today()
-        today_iso  = today.isocalendar()
+        today     = date.today()
+        today_iso = today.isocalendar()
         cur_monday = date.fromisocalendar(today_iso[0], today_iso[1], 1)
 
         if not use_current_week:
@@ -265,7 +261,6 @@ def get_planning(
             if plan_row and plan_row["min_plan"]:
                 if not db_start or plan_row["min_plan"] < db_start:
                     db_start = plan_row["min_plan"]
-
             if db_start:
                 ds_iso = db_start.isocalendar()
                 start_date = date.fromisocalendar(ds_iso[0], ds_iso[1], 1)
@@ -316,6 +311,7 @@ def get_planning(
         """)
         staff_roles = cur.fetchall()
         shortnames = list({r["shortname"] for r in staff_roles})
+        staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles}
 
         if shortnames:
             cur.execute("""
@@ -454,8 +450,6 @@ def get_planning(
         capacity_by_staff: dict = {}
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}
 
-        staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles}
-
         for name, hpd in staff_hpd_map.items():
             week_hours: dict = {}
             for wk in weeks:
@@ -472,10 +466,9 @@ def get_planning(
 
         plan_map: dict = {}
         for pl in plannings_raw:
-            wk    = iso_week_key(pl["start_date"])
-            pid   = pl["project_id"]
+            wk  = iso_week_key(pl["start_date"])
+            pid = pl["project_id"]
             entry = dict(pl)
-
             entry["is_outdated"] = (
                 pid is not None
                 and pid in max_worked_day
@@ -509,6 +502,11 @@ def get_planning(
         else:
             absences_status = []
 
+        at_hols_status = _build_at_hols(
+            min((r["start_date"] for r in plan_rows_status), default=date.today()),
+            max((r["end_date"]   for r in plan_rows_status), default=date.today()) + timedelta(weeks=12)
+        ) if plan_rows_status else set()
+
         cur.execute("""
             SELECT project_id,
                    COALESCE(SUM(impl_hours),0) AS worked_impl,
@@ -529,91 +527,102 @@ def get_planning(
         if has_any_filter:
             status_project_sql += " AND p.project_id = ANY(%s)"
             status_project_params.append(list(filtered_status_project_ids))
-
         cur.execute(status_project_sql, status_project_params)
         projects_for_status = {r["project_id"]: dict(r) for r in cur.fetchall()}
 
-    at_hols_status = _build_at_hols(
-        min((r["start_date"] for r in plan_rows_status), default=date.today()),
-        max((r["end_date"]   for r in plan_rows_status), default=date.today()) + timedelta(weeks=12)
-    ) if plan_rows_status else set()
+        plan_agg_status: dict = {}
+        last_end_map_status: dict = {}
+        max_valid_future_date: dict = {}
 
-    plan_agg_status: dict = {}
-    last_end_map_status: dict = {}
-    
-    # KORREKTUR: Ermittle die absolut letzte Planungs-KW für das Projekt, sofern sie >= der aktuellen Woche ist
-    max_valid_future_date: dict = {}
+        for pr in plan_rows_status:
+            pid = pr["project_id"]
 
-    for pr in plan_rows_status:
-        pid = pr["project_id"]
+            if has_any_filter and pid not in filtered_status_project_ids:
+                continue
 
-        if has_any_filter and pid not in filtered_status_project_ids:
-            continue
+            if pr["end_date"] >= cur_monday:
+                prev_f = max_valid_future_date.get(pid)
+                if prev_f is None or pr["end_date"] > prev_f:
+                    max_valid_future_date[pid] = pr["end_date"]
 
-        # Für die Ermittlung, ob Planungen in dieser Woche oder später existieren:
-        if pr["end_date"] >= cur_monday:
-            prev_f = max_valid_future_date.get(pid)
-            if prev_f is None or pr["end_date"] > prev_f:
-                max_valid_future_date[pid] = pr["end_date"]
+            last_worked_day = max_worked_day.get(pid)
+            if last_worked_day is not None and last_worked_day > pr["end_date"]:
+                continue
 
-        last_worked_day = max_worked_day.get(pid)
-        if last_worked_day is not None and pr["end_date"] <= last_worked_day:
-            continue
+            h = _effective_hours_in_date_range(
+                pr["staff"], float(pr["hours_per_day"]),
+                pr["start_date"], pr["end_date"],
+                absences_status, at_hols_status)
 
-        h = _effective_hours_in_date_range(
-            pr["staff"], float(pr["hours_per_day"]),
-            pr["start_date"], pr["end_date"],
-            absences_status, at_hols_status)
+            plan_agg_status.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+            role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
+            plan_agg_status[pid][role_key] += h
 
-        plan_agg_status.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
-        role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
-        plan_agg_status[pid][role_key] += h
+            prev = last_end_map_status.get(pid)
+            if prev is None or pr["end_date"] > prev:
+                last_end_map_status[pid] = pr["end_date"]
 
-        prev = last_end_map_status.get(pid)
-        if prev is None or pr["end_date"] > prev:
-            last_end_map_status[pid] = pr["end_date"]
+        ist_kw_map: dict = {}
 
-    ist_kw_map: dict = {}
+        for pid, proj in projects_for_status.items():
+            w  = worked_map.get(pid, {"worked_impl": 0, "worked_test": 0})
+            pa = plan_agg_status.get(pid, {"Developer": 0.0, "Tester": 0.0})
 
-    for pid, proj in projects_for_status.items():
-        w  = worked_map.get(pid, {"worked_impl": 0, "worked_test": 0})
-        pa = plan_agg_status.get(pid, {"Developer": 0.0, "Tester": 0.0})
+            remaining_impl = proj["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
+            remaining_test = proj["plan_test"] - float(w["worked_test"]) - pa["Tester"]
+            diff = remaining_impl + remaining_test
 
-        remaining_impl = proj["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
-        remaining_test = proj["plan_test"] - float(w["worked_test"]) - pa["Tester"]
-        diff = remaining_impl + remaining_test
+            if diff <= 0 or (0 < diff < 15):
+                if pid in max_valid_future_date:
+                    base_date = max_valid_future_date[pid]
+                else:
+                    base_date = last_end_map_status.get(pid, date.today())
 
-        if diff <= 0 or (0 < diff < 15):
-            # KORREKTUR-LOGIK ANWENDEN:
-            # Wenn es Planungen in dieser Woche oder später gibt, nimm deren Folgewoche.
-            if pid in max_valid_future_date:
-                base_date = max_valid_future_date[pid]
-            else:
-                base_date = last_end_map_status.get(pid, date.today())
-                
-            ist_kw = _next_week_key(base_date)
-            if ist_kw not in ist_kw_map:
-                ist_kw_map[ist_kw] = []
-            ist_kw_map[ist_kw].append({
-                "project_id":    pid,
-                "project_name":  proj["project_name"],
-                "color_hexcode": proj["color_hexcode"],
-            })
+                ist_kw = _next_week_key(base_date)
+                if ist_kw not in ist_kw_map:
+                    ist_kw_map[ist_kw] = []
+                ist_kw_map[ist_kw].append({
+                    "project_id":    pid,
+                    "project_name":  proj["project_name"],
+                    "color_hexcode": proj["color_hexcode"],
+                })
 
-    return {
-        "weeks":              weeks,
-        "staff_roles":        [dict(r) for r in staff_roles],
-        "capacity_totals":    capacity_totals,
-        "capacity_by_staff":  capacity_by_staff,
-        "plannings":          plan_map,
-        "absence_map":        absence_map,
-        "available_projects": [dict(p) for p in all_projects_filtered],
-        "available_tasks":    [dict(t) for t in available_tasks],
-        "filter_title_parts": filter_title_parts,
-        "variant_info":       variant_info,
-        "resolved_variant_id": resolved_variant_id,
-        "ist_kw_map":         ist_kw_map,
-    }
+        if ist_kw_map:
+            max_ist_kw = max(ist_kw_map.keys())
+            if weeks and max_ist_kw > weeks[-1]:
+                last_visible_week_date = _week_bounds(weeks[-1])[0]
+                cur_d_ext = last_visible_week_date + timedelta(days=7)
+                while True:
+                    new_wk = iso_week_key(cur_d_ext)
+                    if new_wk not in weeks:
+                        weeks.append(new_wk)
+                    if new_wk == max_ist_kw:
+                        break
+                    if len(weeks) > 100:
+                        break
+                    cur_d_ext += timedelta(days=7)
+
+        for name, hpd in staff_hpd_map.items():
+            for wk in weeks:
+                if wk not in capacity_by_staff[name]["week_hours"]:
+                    h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols)
+                    capacity_by_staff[name]["week_hours"][wk] = h
+                    capacity_totals[wk] = capacity_totals.get(wk, 0.0) + h
+
+        return {
+            "weeks":               weeks,
+            "staff_roles":         [dict(r) for r in staff_roles],
+            "capacity_totals":     capacity_totals,
+            "capacity_by_staff":   capacity_by_staff,
+            "plannings":           plan_map,
+            "absence_map":         absence_map,
+            "available_projects":  [dict(p) for p in all_projects_filtered],
+            "available_tasks":     [dict(t) for t in available_tasks],
+            "filter_title_parts":  filter_title_parts,
+            "variant_info":        variant_info,
+            "resolved_variant_id": resolved_variant_id,
+            "ist_kw_map":          ist_kw_map,
+        }
 
 # ── POST /assign ───────────────────────────────────────────────────────────────
 
