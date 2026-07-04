@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import date, timedelta
 from db import get_cursor
+from routers.planning import _effective_hours_in_date_range, _build_at_hols
 
 router = APIRouter()
 
@@ -45,6 +46,73 @@ def _check_overlap(cur, shortname: str, absence_from: date,
             status_code=409,
             detail="Überschneidung mit bestehender Abwesenheit gefunden"
         )
+
+# ── Hilfsfunktion: Planungen entfernen, die durch eine Abwesenheit auf 0h fallen ──
+def _delete_plannings_reduced_to_zero(cur, shortname: str,
+                                      absence_from: date, absence_to: date) -> int:
+    """
+    Prüft alle Planungseinträge des Mitarbeiters, die sich zeitlich mit dem
+    angegebenen Abwesenheitszeitraum überschneiden, und löscht davon NUR jene,
+    deren effektive Stunden (unter Berücksichtigung ALLER Abwesenheiten des
+    Mitarbeiters) im eigenen Start-/Enddatum-Bereich der Planung auf 0 fallen.
+
+    D.h.:
+    - Eine einzelne Wochenplanung wird nur gelöscht, wenn die Abwesenheit
+      alle Arbeitstage dieser Planung abdeckt.
+    - Bei zwei Teil-Planungen in derselben Woche (z.B. Mo–Mi / Do–Fr) wird
+      nur die Teil-Planung gelöscht, deren Zeitraum durch die Abwesenheit
+      auf 0 effektive Stunden reduziert wird.
+    - Planungen mit weiterhin > 0 effektiven Stunden bleiben unverändert
+      bestehen (keine Löschung, keine Kürzung).
+
+    Gibt die Anzahl der tatsächlich gelöschten Planungseinträge zurück.
+    """
+    cur.execute("""
+        SELECT planning_id, start_date, end_date
+        FROM planning
+        WHERE staff = %s
+          AND start_date <= %s
+          AND end_date   >= %s
+    """, (shortname, absence_to, absence_from))
+    candidates = cur.fetchall()
+
+    if not candidates:
+        return 0
+
+    cur.execute("SELECT hours_per_day FROM staff WHERE shortname = %s", (shortname,))
+    staff_row = cur.fetchone()
+    hours_per_day = float(staff_row["hours_per_day"]) if staff_row else 0.0
+
+    # Zeitraum abdecken, der alle betroffenen Planungen umfasst, damit die
+    # Abwesenheiten und Feiertage dafür vollständig geladen werden.
+    range_start = min(c["start_date"] for c in candidates)
+    range_end   = max(c["end_date"]   for c in candidates)
+
+    # Alle Abwesenheiten des Mitarbeiters in diesem Zeitraum laden – die
+    # gerade angelegte/aktualisierte Abwesenheit ist zu diesem Zeitpunkt
+    # bereits in der DB (INSERT/UPDATE lief vorher in derselben Transaktion).
+    cur.execute("""
+        SELECT shortname, absence_from, absence_to, absence_type
+        FROM absence
+        WHERE shortname = %s
+          AND absence_to   >= %s
+          AND absence_from <= %s
+    """, (shortname, range_start, range_end))
+    absences = [dict(a) for a in cur.fetchall()]
+
+    at_hols = _build_at_hols(range_start, range_end)
+
+    deleted = 0
+    for c in candidates:
+        effective_hours = _effective_hours_in_date_range(
+            shortname, hours_per_day, c["start_date"], c["end_date"],
+            absences, at_hols
+        )
+        if effective_hours <= 0:
+            cur.execute("DELETE FROM planning WHERE planning_id = %s", (c["planning_id"],))
+            deleted += 1
+
+    return deleted
 
 # ── Endpunkte ──────────────────────────────────────────────────────────────────
 @router.get("/")
@@ -93,7 +161,11 @@ def get_absence_summary(shortname: Optional[str] = None):
 
 @router.post("/", status_code=201)
 def create_absence(data: AbsenceCreate):
-    """Neue Abwesenheit anlegen, mit Überlappungsprüfung."""
+    """
+    Neue Abwesenheit anlegen, mit Überlappungsprüfung.
+    Planungseinträge des Mitarbeiters, die durch die neue Abwesenheit auf
+    0 effektive Stunden reduziert werden, werden automatisch entfernt.
+    """
     if data.absence_to < data.absence_from:
         raise HTTPException(status_code=422,
                             detail="Enddatum muss nach Startdatum liegen")
@@ -106,11 +178,23 @@ def create_absence(data: AbsenceCreate):
             RETURNING absence_id
         """, (data.shortname, data.absence_from, data.absence_to, data.absence_type))
         row = cur.fetchone()
-        return {"absence_id": row["absence_id"]}
+
+        deleted_plannings_count = _delete_plannings_reduced_to_zero(
+            cur, data.shortname, data.absence_from, data.absence_to
+        )
+
+        return {
+            "absence_id": row["absence_id"],
+            "deleted_plannings_count": deleted_plannings_count,
+        }
 
 @router.put("/{absence_id}")
 def update_absence(absence_id: int, data: AbsenceUpdate):
-    """Abwesenheit aktualisieren, mit Überlappungsprüfung."""
+    """
+    Abwesenheit aktualisieren, mit Überlappungsprüfung.
+    Planungseinträge des Mitarbeiters, die durch den (neuen) Abwesenheitszeitraum
+    auf 0 effektive Stunden reduziert werden, werden automatisch entfernt.
+    """
     with get_cursor(commit=True) as cur:
         cur.execute("SELECT * FROM absence WHERE absence_id = %s", (absence_id,))
         existing = cur.fetchone()
@@ -134,7 +218,14 @@ def update_absence(absence_id: int, data: AbsenceUpdate):
             WHERE absence_id = %s
         """, (new_from, new_to, new_type, absence_id))
 
-        return {"absence_id": absence_id}
+        deleted_plannings_count = _delete_plannings_reduced_to_zero(
+            cur, existing["shortname"], new_from, new_to
+        )
+
+        return {
+            "absence_id": absence_id,
+            "deleted_plannings_count": deleted_plannings_count,
+        }
 
 @router.delete("/{absence_id}", status_code=204)
 def delete_absence(absence_id: int):

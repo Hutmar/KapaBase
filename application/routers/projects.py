@@ -76,6 +76,22 @@ def _next_free_color() -> str:
             if c not in used:
                 return c
 
+
+def _delete_plannings_for_project(cur, project_id: int) -> int:
+    """
+    Löscht alle Planungseinträge, die zu diesem Projekt gehören –
+    entweder direkt (planning.project_id) oder über einen Task,
+    der diesem Projekt zugeordnet ist (planning.task_id -> tasks.project_id).
+    Gibt die Anzahl der gelöschten Zeilen zurück.
+    """
+    cur.execute("""
+        DELETE FROM planning
+        WHERE project_id = %s
+           OR task_id IN (SELECT task_id FROM tasks WHERE project_id = %s)
+    """, (project_id, project_id))
+    return cur.rowcount
+
+
 # ── Endpunkte ──────────────────────────────────────────────────────────────────  
 @router.get("/")
 def list_projects(
@@ -172,6 +188,12 @@ def create_project(data: ProjectBase):
     if data.impl_hours + data.test_hours != data.target_hours:
         raise HTTPException(status_code=422,
                             detail="impl_hours + test_hours muss target_hours ergeben")  
+
+    # NEU: Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein
+    planned = data.planned
+    if data.target_hours == 0:
+        planned = False
+
     with get_cursor(commit=True) as cur:
         cur.execute("""
             INSERT INTO project
@@ -181,7 +203,7 @@ def create_project(data: ProjectBase):
             RETURNING project_id
         """, (data.project_name, data.customer, data.jira_id,
               data.target_hours, data.impl_hours, data.test_hours,
-              data.planned, data.start_date, data.due_date,
+              planned, data.start_date, data.due_date,
               data.remarks, data.done, data.color_hexcode, data.sort_order, data.project_type.value))
         return {"project_id": cur.fetchone()["project_id"]}  
 
@@ -213,6 +235,12 @@ def update_project(project_id: int, data: ProjectUpdate):
         if fields["impl_hours"] + fields["test_hours"] != fields["target_hours"]:
             raise HTTPException(status_code=422,
                                 detail="impl_hours + test_hours muss target_hours ergeben")  
+
+        # NEU: Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein –
+        # unabhängig davon, was der Client für "planned" übergeben hat
+        if fields["target_hours"] == 0:
+            fields["planned"] = False
+
         cur.execute("""
             UPDATE project SET
             project_name=%s, customer=%s, jira_id=%s, target_hours=%s,
@@ -224,7 +252,18 @@ def update_project(project_id: int, data: ProjectUpdate):
               fields["planned"], fields["start_date"], fields["due_date"],
               fields["remarks"], fields["done"], fields["color_hexcode"],
               fields["sort_order"], fields["project_type"], project_id))  
-        return {"project_id": project_id}  
+
+        # NEU: Wenn das Projekt von "geplant" auf "nicht geplant" wechselt
+        # (manuell abgewählt ODER automatisch wegen target_hours=0),
+        # werden alle bestehenden Planungseinträge entfernt.
+        deleted_plannings_count = 0
+        if ex["planned"] and not fields["planned"]:
+            deleted_plannings_count = _delete_plannings_for_project(cur, project_id)
+
+        return {
+            "project_id": project_id,
+            "deleted_plannings_count": deleted_plannings_count,
+        }  
 
 @router.get("/reorder/bulk")
 def reorder_projects(order: List[dict]):

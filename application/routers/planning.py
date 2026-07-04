@@ -712,7 +712,7 @@ def assign_planning(data: PlanningEntry):
                     "Aufteilung der Woche nicht möglich – das bestehende Projekt würde "
                     "auf den Zeitraum Mo–Mi verkürzt, an dem der Mitarbeiter vollständig "
                     "abwesend ist (0 effektive Stunden)")
-                    
+
             cur.execute("""
                 UPDATE planning SET start_date = %s, end_date = %s
                 WHERE planning_id = %s
@@ -971,6 +971,233 @@ def project_planning_status(variant_id: Optional[int] = None):
         })
 
     return result
+
+# ── GET /gantt ─────────────────────────────────────────────────────────────────
+
+@router.get("/gantt")
+def get_gantt(
+    use_current_week: bool = False,
+    end_week: Optional[str] = None,
+    variant_id: Optional[int] = None,
+):
+    """
+    Liefert Daten für die Gantt-Ansicht:
+    - Zeitachse (weeks) wie bei /planning
+    - Liste der Projekte mit VOLLSTÄNDIGER Planung (d.h. jene Projekte, für die
+      auf der Planungsseite ein "Liefertermin IST" angezeigt wird), inkl.
+      Start-/Enddatum des Balkens (= kleinstes bis größtes Planungsdatum
+      dieses Projekts in der gewählten Variante).
+    """
+    with get_cursor() as cur:
+        resolved_variant_id = _resolve_variant_id(cur, variant_id)
+
+        cur.execute("""
+            SELECT variant_id, variant_name, is_active, created_at
+            FROM planning_variant WHERE variant_id = %s
+        """, (resolved_variant_id,))
+        variant_info = dict(cur.fetchone())
+
+        cur.execute("""
+            SELECT variant_id, variant_name, is_active
+            FROM planning_variant
+            ORDER BY created_at DESC
+        """)
+        variants = [dict(r) for r in cur.fetchall()]
+
+        # ── Zeitbereich (analog zu /planning) ───────────────────────────────
+        cur.execute("""
+            SELECT MIN(start_date) AS min_start, MAX(due_date) AS max_due
+            FROM project
+            WHERE planned = TRUE AND done = FALSE
+            AND project_type = 'Project'
+            AND start_date IS NOT NULL AND due_date IS NOT NULL
+        """)
+        range_row = cur.fetchone()
+
+        today      = date.today()
+        today_iso  = today.isocalendar()
+        cur_monday = date.fromisocalendar(today_iso[0], today_iso[1], 1)
+
+        if not use_current_week:
+            db_start = range_row["min_start"] if (range_row and range_row["min_start"]) else None
+            cur.execute("SELECT MIN(start_date) AS min_plan FROM planning WHERE variant_id = %s", (resolved_variant_id,))
+            plan_row = cur.fetchone()
+            if plan_row and plan_row["min_plan"]:
+                if not db_start or plan_row["min_plan"] < db_start:
+                    db_start = plan_row["min_plan"]
+            if db_start:
+                ds_iso = db_start.isocalendar()
+                start_date = date.fromisocalendar(ds_iso[0], ds_iso[1], 1)
+            else:
+                start_date = cur_monday
+        else:
+            start_date = cur_monday
+
+        max_due = range_row["max_due"] if (range_row and range_row["max_due"]) else None
+
+        cur.execute("SELECT MAX(end_date) AS max_plan_end FROM planning WHERE variant_id = %s", (resolved_variant_id,))
+        plan_end_row = cur.fetchone()
+        max_plan_end = plan_end_row["max_plan_end"] if plan_end_row else None
+        if max_plan_end:
+            max_due = max(max_due, max_plan_end) if max_due else max_plan_end
+
+        if max_due:
+            md_iso   = max_due.isocalendar()
+            end_date = date.fromisocalendar(md_iso[0], md_iso[1], 7) + timedelta(weeks=1)
+        else:
+            end_date = start_date + timedelta(weeks=12)
+
+        weeks: List[str] = []
+        cur_d = start_date
+        while cur_d <= end_date:
+            wk = iso_week_key(cur_d)
+            if not weeks or weeks[-1] != wk:
+                weeks.append(wk)
+            cur_d += timedelta(days=7)
+
+        # ── Projekte + Ist-Status (analog project_planning_status) ─────────
+        cur.execute("""
+            SELECT p.project_id, p.project_name, p.customer,
+                   p.target_hours, p.impl_hours AS plan_impl,
+                   p.test_hours   AS plan_test,
+                   p.due_date, p.color_hexcode
+            FROM project p
+            WHERE p.planned = TRUE AND p.done = FALSE
+            AND p.project_type = 'Project'
+            ORDER BY p.due_date ASC NULLS LAST, p.project_name ASC
+        """)
+        projects = cur.fetchall()
+
+        cur.execute("""
+            SELECT project_id,
+                   COALESCE(SUM(impl_hours),0) AS worked_impl,
+                   COALESCE(SUM(test_hours),0) AS worked_test
+            FROM worked_hours GROUP BY project_id
+        """)
+        worked = {r["project_id"]: r for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT pl.project_id, pl.task_id,
+                   pl.staff, pl.start_date, pl.end_date,
+                   r.role, s.hours_per_day
+            FROM planning pl
+            JOIN roles r ON r.role_id   = pl.role_id
+            JOIN staff s ON s.shortname = pl.staff
+            WHERE pl.project_id IS NOT NULL
+            AND   pl.variant_id = %s
+        """, (resolved_variant_id,))
+        plan_rows = [dict(r) for r in cur.fetchall()]
+
+        if plan_rows:
+            pstaff = list({r["staff"] for r in plan_rows})
+            min_d  = min(r["start_date"] for r in plan_rows)
+            max_d  = max(r["end_date"]   for r in plan_rows)
+            cur.execute("""
+                SELECT shortname, absence_from, absence_to
+                FROM absence
+                WHERE shortname = ANY(%s)
+                AND absence_to >= %s AND absence_from <= %s
+            """, (pstaff, min_d, max_d))
+            all_absences = [dict(a) for a in cur.fetchall()]
+        else:
+            all_absences = []
+            min_d = date.today()
+            max_d = date.today()
+
+        cur.execute("""
+            SELECT project_id, MAX(day) AS max_day
+            FROM worked_hours GROUP BY project_id
+        """)
+        max_worked_day_status = {r["project_id"]: r["max_day"] for r in cur.fetchall()}
+
+    at_hols = _build_at_hols(min_d, max_d + timedelta(weeks=12))
+
+    plan_cur:      dict = {}
+    last_end_map:  dict = {}
+    bar_start_map: dict = {}
+    bar_end_map:   dict = {}
+
+    for pr in plan_rows:
+        pid = pr["project_id"]
+
+        # Balken-Bereich: kleinstes bis größtes Planungsdatum dieses Projekts
+        # in der gewählten Variante (über ALLE Zuweisungen, unabhängig davon
+        # ob sie durch Ist-Stunden überholt wurden).
+        bs = bar_start_map.get(pid)
+        if bs is None or pr["start_date"] < bs:
+            bar_start_map[pid] = pr["start_date"]
+        be = bar_end_map.get(pid)
+        if be is None or pr["end_date"] > be:
+            bar_end_map[pid] = pr["end_date"]
+
+        h = _effective_hours_in_date_range(
+            pr["staff"], float(pr["hours_per_day"]),
+            pr["start_date"], pr["end_date"],
+            all_absences, at_hols)
+
+        role_key = pr["role"] if pr["role"] in ("Developer", "Tester") else "Developer"
+
+        is_outdated = (
+            pid in max_worked_day_status
+            and max_worked_day_status[pid] > pr["end_date"]
+        )
+        if not is_outdated:
+            plan_cur.setdefault(pid, {"Developer": 0.0, "Tester": 0.0})
+            plan_cur[pid][role_key] += h
+
+            prev_end_date = last_end_map.get(pid)
+            if prev_end_date is None or pr["end_date"] > prev_end_date:
+                last_end_map[pid] = pr["end_date"]
+
+    result_projects = []
+    for p in projects:
+        pid = p["project_id"]
+        w   = worked.get(pid, {"worked_impl": 0, "worked_test": 0})
+        pc  = plan_cur.get(pid, {"Developer": 0.0, "Tester": 0.0})
+
+        done_impl = float(w["worked_impl"])
+        done_test = float(w["worked_test"])
+
+        remaining_impl = p["plan_impl"] - done_impl - pc["Developer"]
+        remaining_test = p["plan_test"] - done_test - pc["Tester"]
+        diff           = remaining_impl + remaining_test
+
+        # "vollständig verplant" = jene Projekte, für die auf der
+        # Planungsseite ein Liefertermin IST berechnet wird.
+        is_complete = diff <= 0 or (0 < diff < 15)
+        if not is_complete:
+            continue
+        if pid not in bar_start_map or pid not in bar_end_map:
+            continue
+
+        due_kw = None
+        if p["due_date"]:
+            iso    = p["due_date"].isocalendar()
+            due_kw = f"{iso[0]}-W{iso[1]:02d}"
+
+        result_projects.append({
+            "project_id":     pid,
+            "project_name":   p["project_name"],
+            "color_hexcode":  p["color_hexcode"],
+            "target_hours":   p["target_hours"],
+            "due_date":       str(p["due_date"]) if p["due_date"] else None,
+            "due_kw":         due_kw,
+            "bar_start_date": str(bar_start_map[pid]),
+            "bar_end_date":   str(bar_end_map[pid]),
+        })
+
+    result_projects.sort(key=lambda x: (x["bar_start_date"], x["due_date"] or ""))
+
+    if end_week:
+        weeks = [wk for wk in weeks if wk <= end_week]
+
+    return {
+        "weeks":               weeks,
+        "variant_info":        variant_info,
+        "variants":            variants,
+        "resolved_variant_id": resolved_variant_id,
+        "projects":            result_projects,
+    }
 
 # ── GET /variants ──────────────────────────────────────────────────────────────
 

@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+{% block title %}Gantt – Kapaverwaltung{% endblock %}
+{% block content %}
+<style>
+#gantt-header-wrap {
+    position: sticky;
+    top: 52px;
+    z-index: 20;
+    background: var(--bg2);
+    border-bottom: 2px solid var(--border);
+    overflow-x: hidden;
+    cursor: grab;
+}
+#gantt-header-wrap.is-dragging { cursor: grabbing; user-select: none; }
+#gantt-body-wrap {
+    overflow-x: auto;
+    margin-bottom: 24px;
+    cursor: grab;
+}
+#gantt-body-wrap.is-dragging { cursor: grabbing; user-select: none; }
+
+.gantt-header-table,
+.gantt-body-table {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+    table-layout: auto;
+    min-width: max-content;
+}
+.gantt-header-table tr.month-row th {
+    background: var(--bg2);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    height: 24px;
+    line-height: 24px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 1px solid var(--border);
+    box-sizing: border-box;
+}
+.gantt-header-table tr.month-row th.proj-col { text-align: left; border-bottom: none; }
+.gantt-header-table tr.kw-row th {
+    background: var(--bg3);
+    font-size: 10px;
+    font-weight: 500;
+    height: 28px;
+    line-height: 28px;
+    padding: 0 8px;
+    text-align: center;
+    white-space: nowrap;
+    min-width: 90px;
+    box-sizing: border-box;
+}
+.gantt-header-table tr.kw-row th.proj-col { min-width: 240px; text-align: left; }
+.kw-header-current { color: var(--accent) !important; border-bottom: 2px solid var(--accent) !important; }
+
+.gantt-body-table td.proj-name {
+    position: sticky;
+    left: 0;
+    background: var(--bg2);
+    z-index: 5;
+    border-right: 1px solid var(--border);
+    white-space: nowrap;
+    padding: 8px 10px;
+    min-width: 240px;
+    box-sizing: border-box;
+}
+.gantt-body-table td {
+    padding: 0;
+    border: 1px solid rgba(42,48,80,0.3);
+    min-width: 90px;
+    height: 46px;
+    vertical-align: middle;
+    text-align: center;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.gantt-bar-cell { height: 100%; width: 100%; }
+
+.gantt-empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text2);
+}
+
+.centered-filter-container { display:flex; justify-content:center; width:100%; padding:16px 0; }
+.filter-box {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+.variant-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    background: rgba(74,144,217,0.15);
+    color: var(--accent);
+    border: 1px solid rgba(74,144,217,0.3);
+}
+.variant-badge.active { background: rgba(46,204,113,0.15); color: var(--accent2); border-color: rgba(46,204,113,0.3); }
+</style>
+
+<div class="card" style="padding-bottom:0">
+    <div class="card-header">
+        <h1>Gantt</h1>
+        <span id="variant-badge" class="variant-badge" title="Ausgewählte Planungsvariante"></span>
+    </div>
+
+    <div id="filterBox" class="centered-filter-container">
+        <div class="filter-box">
+            <label class="flex-gap text-dim" style="font-size:12px">
+                <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadGantt()">
+                Ab aktueller KW
+            </label>
+
+            <label class="flex-gap text-dim" style="font-size:12px">
+                Von KW:
+                <select id="start-week-select" style="width:110px" disabled onchange="loadGantt()">
+                    <option value="">– auto –</option>
+                </select>
+            </label>
+
+            <label class="flex-gap text-dim" style="font-size:12px">
+                Bis KW:
+                <select id="end-week-select" style="width:110px" onchange="loadGantt()">
+                    <option value="">– kein –</option>
+                </select>
+            </label>
+
+            <label class="flex-gap text-dim" style="font-size:12px">
+                Variante:
+                <select id="variant-select" style="width:220px" onchange="onVariantChange()">
+                </select>
+            </label>
+
+            <button class="btn btn-ghost btn-sm" onclick="loadGantt()">↻ Aktualisieren</button>
+        </div>
+    </div>
+
+    <div id="gantt-header-wrap">
+        <table class="gantt-header-table" id="gantt-header-table">
+            <thead id="gantt-thead"></thead>
+        </table>
+    </div>
+    <div id="gantt-body-wrap">
+        <table class="gantt-body-table" id="gantt-body-table">
+            <tbody id="gantt-tbody"></tbody>
+        </table>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let ganttData = null;
+let selectedVariantId = null;
+let _allAvailableWeeksForDropdown = null;
+
+const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+async function api(method, url, body = null) {
+    const options = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body) options.body = JSON.stringify(body);
+    const response = await fetch(url, options);
+    if (!response.ok) {
+        let errorData = { message: `HTTP Error ${response.status} - ${response.statusText}` };
+        try {
+            const errorText = await response.text();
+            if (errorText) {
+                if (response.headers.get('Content-Type')?.includes('application/json')) {
+                    errorData = JSON.parse(errorText);
+                } else { errorData.detail = errorText; }
+            }
+        } catch (e) { console.error("Fehler beim Parsen der Fehlerantwort:", e); }
+        throw new Error(errorData.detail || errorData.message || "Unbekannter Fehler");
+    }
+    return await response.json();
+}
+
+// ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
+function weekMonday(weekKey) {
+    const [yearStr, wStr] = weekKey.split('-W');
+    const year = parseInt(yearStr), week = parseInt(wStr);
+    const jan4    = new Date(Date.UTC(year, 0, 4));
+    const jan4day = jan4.getUTCDay() || 7;
+    const kw1mon  = new Date(jan4.getTime() - (jan4day - 1) * 86400000);
+    return new Date(kw1mon.getTime() + (week - 1) * 7 * 86400000);
+}
+function weekFriday(weekKey) {
+    const mon = weekMonday(weekKey);
+    return new Date(mon.getTime() + 4 * 86400000);
+}
+function fmtDate(d) { return `${d.getUTCDate()}.${d.getUTCMonth()+1}.`; }
+function getIsoWeek(d) {
+    const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+    const y1 = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+    return { year: utc.getUTCFullYear(), week: Math.ceil((((utc - y1) / 86400000) + 1) / 7) };
+}
+function _nextWeekKey(baseDate, weeksToAdd) {
+    const nextWeekDate = new Date(baseDate.getTime());
+    nextWeekDate.setDate(baseDate.getDate() + (7 * weeksToAdd));
+    const nxt_iso = getIsoWeek(nextWeekDate);
+    return `${nxt_iso.year}-W${String(nxt_iso.week).padStart(2,'0')}`;
+}
+function dateFromIso(s) {
+    // 'YYYY-MM-DD' -> UTC Date
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+}
+
+// ── Laden ──────────────────────────────────────────────────────────────────────
+async function loadGantt() {
+    const useCurrentWeekCheckbox = document.getElementById('use-current-week');
+    const startWeekSelect = document.getElementById('start-week-select');
+    const endWeekSelect   = document.getElementById('end-week-select');
+
+    const useCurrent = useCurrentWeekCheckbox.checked;
+    let url = `/api/planning/gantt?use_current_week=${useCurrent}`;
+    if (selectedVariantId !== null) url += `&variant_id=${selectedVariantId}`;
+
+    let selectedStartWeek = startWeekSelect.value;
+    let selectedEndWeek   = endWeekSelect.value;
+    if (selectedEndWeek) url += `&end_week=${encodeURIComponent(selectedEndWeek)}`;
+
+    try {
+        ganttData = await api('GET', url);
+    } catch(e) {
+        toast('Fehler beim Laden: ' + e.message, 'error');
+        console.error(e);
+        return;
+    }
+
+    if (selectedVariantId === null) {
+        selectedVariantId = ganttData.resolved_variant_id;
+    }
+
+    populateVariantDropdown(ganttData.variants);
+    updateVariantBadge(ganttData.variant_info);
+
+    await ensureWeekDropdownsPopulated();
+    toggleTimeRangeFilters();
+
+    let weeks = ganttData.weeks;
+    if (!useCurrent && selectedStartWeek && weeks) {
+        const startIndex = weeks.indexOf(selectedStartWeek);
+        if (startIndex !== -1) {
+            weeks = weeks.slice(startIndex);
+        }
+    }
+
+    try { renderGantt(weeks); }
+    catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); }
+}
+
+function populateVariantDropdown(variants) {
+    const sel = document.getElementById('variant-select');
+    if (!sel) return;
+    const current = selectedVariantId;
+    sel.innerHTML = (variants || []).map(v => {
+        const name = v.variant_name || `Variante #${v.variant_id}`;
+        const activeLabel = v.is_active ? ' (Aktiv)' : '';
+        return `<option value="${v.variant_id}" ${v.variant_id === current ? 'selected' : ''}>${name}${activeLabel}</option>`;
+    }).join('');
+}
+
+function onVariantChange() {
+    const sel = document.getElementById('variant-select');
+    selectedVariantId = parseInt(sel.value);
+    _allAvailableWeeksForDropdown = null; // Wochenbereich hängt von der Variante ab
+    document.getElementById('start-week-select').value = '';
+    document.getElementById('end-week-select').value = '';
+    loadGantt();
+}
+
+function updateVariantBadge(variantInfo) {
+    const badge = document.getElementById('variant-badge');
+    if (!variantInfo) { badge.textContent = ''; return; }
+    const name = variantInfo.variant_name || `Variante #${variantInfo.variant_id}`;
+    badge.textContent = variantInfo.is_active ? `✓ ${name}` : name;
+    badge.className = 'variant-badge' + (variantInfo.is_active ? ' active' : '');
+    badge.title = variantInfo.is_active
+        ? `Aktive Planungsvariante: ${name}`
+        : `Planungsvariante: ${name} (inaktiv)`;
+}
+
+function toggleTimeRangeFilters() {
+    const useCurrentWeekCheckbox = document.getElementById('use-current-week');
+    const startWeekSelect = document.getElementById('start-week-select');
+    startWeekSelect.disabled = useCurrentWeekCheckbox.checked;
+}
+
+async function ensureWeekDropdownsPopulated() {
+    if (!_allAvailableWeeksForDropdown) {
+        let fetchUrl = `/api/planning/gantt?use_current_week=false&end_week=${_nextWeekKey(new Date(), 64)}`;
+        if (selectedVariantId !== null) fetchUrl += `&variant_id=${selectedVariantId}`;
+        const base = await api('GET', fetchUrl);
+        _allAvailableWeeksForDropdown = base.weeks || [];
+    }
+    populateWeekDropdown('start-week-select', _allAvailableWeeksForDropdown, document.getElementById('start-week-select').value, '– auto –');
+    populateWeekDropdown('end-week-select', _allAvailableWeeksForDropdown, document.getElementById('end-week-select').value, '– kein –');
+}
+
+function populateWeekDropdown(selectId, weeks, currentVal, defaultLabel) {
+    const sel = document.getElementById(selectId);
+    if (!sel) return;
+    sel.innerHTML = `<option value="">${defaultLabel}</option>`;
+    (weeks || []).forEach(wk => {
+        const kwNum = parseInt(wk.split('-W')[1]);
+        const opt   = document.createElement('option');
+        opt.value       = wk;
+        opt.textContent = `KW ${kwNum} (${wk.split('-W')[0]})`;
+        if (wk === currentVal) opt.selected = true;
+        sel.appendChild(opt);
+    });
+}
+
+// ── Rendern ────────────────────────────────────────────────────────────────────
+function renderGantt(weeks) {
+    const projects = (ganttData && ganttData.projects) || [];
+
+    const today     = new Date();
+    const todayIso  = getIsoWeek(today);
+    const currentWk = `${todayIso.year}-W${String(todayIso.week).padStart(2,'0')}`;
+
+    const COL_PROJ = 240;
+    const COL_KW   = 90;
+
+    const colgroupHtml = `<colgroup>
+        <col style="width:${COL_PROJ}px;min-width:${COL_PROJ}px">
+        ${weeks.map(() => `<col style="width:${COL_KW}px;min-width:${COL_KW}px">`).join('')}
+    </colgroup>`;
+
+    // Monats-Gruppen
+    const monthGroups = [];
+    let curMonth = null;
+    weeks.forEach(wk => {
+        const m = weekMonday(wk);
+        const label = `${MONTHS_DE[m.getUTCMonth()]} ${m.getUTCFullYear()}`;
+        if (label === curMonth) monthGroups[monthGroups.length - 1].colspan++;
+        else { curMonth = label; monthGroups.push({ label, colspan: 1 }); }
+    });
+
+    let monthRowHtml = '<tr class="month-row"><th class="proj-col"></th>';
+    monthGroups.forEach(g => { monthRowHtml += `<th colspan="${g.colspan}">${g.label}</th>`; });
+    monthRowHtml += '</tr>';
+
+    let kwRowHtml = '<tr class="kw-row"><th class="proj-col">Projekt</th>';
+    weeks.forEach(wk => {
+        const isCurrent = (wk === currentWk);
+        const isPast    = wk < currentWk;
+        const kwNum = parseInt(wk.split('-W')[1]);
+        const mon   = weekMonday(wk);
+        const fri   = weekFriday(wk);
+        const tip   = `${fmtDate(mon)}–${fmtDate(fri)}`;
+        const pastStyle = isPast ? 'opacity:.5;' : '';
+        kwRowHtml += `<th class="${isCurrent ? 'kw-header-current' : ''}" style="${pastStyle}" title="${tip}">KW ${kwNum}</th>`;
+    });
+    kwRowHtml += '</tr>';
+
+    const headerTable = document.getElementById('gantt-header-table');
+    const oldCg = headerTable.querySelector('colgroup');
+    if (oldCg) oldCg.remove();
+    headerTable.insertAdjacentHTML('afterbegin', colgroupHtml);
+    document.getElementById('gantt-thead').innerHTML = monthRowHtml + kwRowHtml;
+
+    let tbody = '';
+    if (projects.length === 0) {
+        tbody = `<tr><td colspan="${weeks.length + 1}" class="gantt-empty">Keine vollständig verplanten Projekte im gewählten Zeitraum / Variante.</td></tr>`;
+    } else {
+        projects.forEach(p => {
+            const color   = p.color_hexcode || '#555';
+            const barStart = dateFromIso(p.bar_start_date);
+            const barEnd   = dateFromIso(p.bar_end_date);
+
+            let row = `<tr>
+                <td class="proj-name">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span style="width:3px;height:32px;background:${color};border-radius:2px;flex-shrink:0"></span>
+                        <div>
+                            <div style="font-weight:600">${esc(p.project_name)}</div>
+                            <div style="font-size:10px;color:var(--text2)">Planwert: ${Math.round(p.target_hours)}h</div>
+                            <div style="font-size:10px;color:var(--text2)">Liefertermin Soll: ${p.due_date || '–'}</div>
+                        </div>
+                    </div>
+                </td>`;
+
+            weeks.forEach(wk => {
+                const mon = weekMonday(wk);
+                const fri = weekFriday(wk);
+                const overlaps = mon <= barEnd && fri >= barStart;
+                if (overlaps) {
+                    const title = `${esc(p.project_name)}: ${p.bar_start_date} – ${p.bar_end_date}`;
+                    row += `<td title="${title}"><div class="gantt-bar-cell" style="background:${color}"></div></td>`;
+                } else {
+                    row += `<td></td>`;
+                }
+            });
+
+            row += '</tr>';
+            tbody += row;
+        });
+    }
+
+    const bodyTable = document.getElementById('gantt-body-table');
+    const oldCgB = bodyTable.querySelector('colgroup');
+    if (oldCgB) oldCgB.remove();
+    bodyTable.insertAdjacentHTML('afterbegin', colgroupHtml);
+    document.getElementById('gantt-tbody').innerHTML = tbody;
+
+    const bodyWrap   = document.getElementById('gantt-body-wrap');
+    const headerWrap = document.getElementById('gantt-header-wrap');
+    bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
+    initDragScroll('gantt-body-wrap');
+    initDragScroll('gantt-header-wrap', 'gantt-body-wrap');
+}
+
+// ── Hilfsfunktionen ────────────────────────────────────────────────────────────
+function esc(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// ── Drag-to-Scroll ─────────────────────────────────────────────────────────────
+function initDragScroll(wrapperId, scrollTargetId) {
+    const el       = document.getElementById(wrapperId);
+    const scrollEl = scrollTargetId ? document.getElementById(scrollTargetId) : el;
+    if (!el || !scrollEl) return;
+
+    if (el._dragScrollCleanup) el._dragScrollCleanup();
+
+    let isDown = false;
+    let startX = 0;
+    let scrollStart = 0;
+    let didDrag = false;
+
+    const onMouseDown = (e) => {
+        if (e.button !== 0) return;
+        if (e.target.closest('button, a, input, select')) return;
+        isDown = true;
+        didDrag = false;
+        startX = e.pageX;
+        scrollStart = scrollEl.scrollLeft;
+        el.classList.add('is-dragging');
+        e.preventDefault();
+    };
+    const onMouseMove = (e) => {
+        if (!isDown) return;
+        const dx = e.pageX - startX;
+        if (Math.abs(dx) > 3) didDrag = true;
+        scrollEl.scrollLeft = scrollStart - dx;
+    };
+    const onMouseUp = () => {
+        if (!isDown) return;
+        isDown = false;
+        el.classList.remove('is-dragging');
+    };
+    const onClickCapture = (e) => {
+        if (didDrag) { e.stopPropagation(); didDrag = false; }
+    };
+
+    el.addEventListener('mousedown', onMouseDown);
+    el.addEventListener('click', onClickCapture, true);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    el._dragScrollCleanup = () => {
+        el.removeEventListener('mousedown', onMouseDown);
+        el.removeEventListener('click', onClickCapture, true);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    };
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('use-current-week').addEventListener('change', () => {
+        toggleTimeRangeFilters();
+        loadGantt();
+    });
+    loadGantt();
+});
+</script>
+{% endblock %}

@@ -297,13 +297,18 @@ async function saveAbsence() {
         absence_type: document.getElementById('f-type').value,
     };
     try {
+        let result;
         if (editingId) {
-            await api('PUT', `/api/absence/${editingId}`, payload);
+            result = await api('PUT', `/api/absence/${editingId}`, payload);
         } else {
-            await api('POST', '/api/absence/', payload);
+            result = await api('POST', '/api/absence/', payload);
         }
         closeModal();
-        toast('Gespeichert');
+        let msg = 'Gespeichert';
+        if (result && result.deleted_plannings_count > 0) {
+            msg += ` – ${result.deleted_plannings_count} Planungen wurden entfernt`;
+        }
+        toast(msg);
         loadAbsences();
         loadAbsenceSummary();
     } catch (e) {

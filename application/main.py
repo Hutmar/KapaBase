@@ -93,6 +93,10 @@ async def page_planning_variants(request: Request):
     editable = has_permission(request, "planning_variants", "edit")
     return templates.TemplateResponse("planning_variants.html", {"request": request, "has_edit_rights": editable})
 
+@app.get("/gantt", response_class=HTMLResponse)
+async def page_gantt(request: Request):
+    return templates.TemplateResponse("gantt.html", {"request": request})
+
 @app.get("/worked_hours", response_class=HTMLResponse)
 async def page_worked_hours_standalone(request: Request):
     editable = has_permission(request, "worked_hours", "edit")
