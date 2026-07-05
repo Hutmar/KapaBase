@@ -85,6 +85,8 @@
     min-width: 150px;
     box-sizing: border-box;
 }
+/* Read-only Ansicht: Cursor immer vom Wrapper (grab/grabbing) erben,
+   damit er sich nicht je nach Zellentyp ändert. */
 .planning-body-table td {
     padding: 3px 4px;
     border: 1px solid rgba(42,48,80,0.3);
@@ -92,13 +94,13 @@
     height: 36px;
     vertical-align: middle;
     text-align: center;
-    cursor: default;
+    cursor: inherit;
     position: relative;
     box-sizing: border-box;
     overflow: hidden;
 }
 .planning-body-table td.droptarget {
-    cursor: default;
+    cursor: inherit;
 }
 .planning-body-table td.droptarget:hover {
     outline: none;
@@ -109,7 +111,7 @@
         rgba(42,48,80,0.55), rgba(42,48,80,0.55) 4px,
         rgba(30,35,54,0.55) 4px, rgba(30,35,54,0.55) 8px
     ) !important;
-    cursor: not-allowed !important;
+    cursor: inherit !important;
     color: var(--text2);
     font-size: 10px;
     overflow: hidden;
@@ -130,7 +132,7 @@
         rgba(30,35,54,0.7), rgba(30,35,54,0.7) 4px,
         rgba(20,24,40,0.7) 4px, rgba(20,24,40,0.7) 8px
     ) !important;
-    cursor: not-allowed !important;
+    cursor: inherit !important;
     color: var(--text2);
     font-size: 10px;
     opacity: 0.6;
@@ -557,8 +559,8 @@ function renderMatrix() {
                 const outdated = pl.is_outdated ? ' outdated' : '';
                 const partial  = isPartialWeek ? ' partial-week' : '';
                 const pTitle   = isPartialWeek ? ` (\u26a0 ${absInfo.absent_days}\u00a0von\u00a0${absInfo.total_days} Tagen abwesend \u2013 Stunden entsprechend reduziert)` : '';
-                return `<div class="planning-cell${outdated}${partial}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth};display:inline-flex;align-items:center;justify-content:flex-start;" title="${label}${pTitle}">
-  <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;width:100%;padding-left:2px;">${label}</span>
+                return `<div class="planning-cell${outdated}${partial}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth}" title="${label}${pTitle}">
+  <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
 </div>`;
             }).join('');
 
