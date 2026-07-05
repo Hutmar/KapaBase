@@ -979,14 +979,21 @@ def get_gantt(
     use_current_week: bool = False,
     end_week: Optional[str] = None,
     variant_id: Optional[int] = None,
+    only_complete: bool = True,
 ):
     """
     Liefert Daten für die Gantt-Ansicht:
     - Zeitachse (weeks) wie bei /planning
-    - Liste der Projekte mit VOLLSTÄNDIGER Planung (d.h. jene Projekte, für die
-      auf der Planungsseite ein "Liefertermin IST" angezeigt wird), inkl.
-      Start-/Enddatum des Balkens (= kleinstes bis größtes Planungsdatum
-      dieses Projekts in der gewählten Variante).
+    - Liste der Projekte, inkl. Start-/Enddatum des Balkens (= kleinstes bis
+      größtes Planungsdatum dieses Projekts in der gewählten Variante),
+      Liefertermin Soll (due_kw) und Liefertermin Ist (ist_kw).
+
+    only_complete = True (Default):
+        Nur Projekte mit VOLLSTÄNDIGER Planung (d.h. jene, für die auf der
+        Planungsseite ein "Liefertermin IST" angezeigt wird).
+    only_complete = False:
+        Alle Projekte, für die überhaupt Planungseinträge in der gewählten
+        Variante existieren (unabhängig vom Verplanungs-Fortschritt).
     """
     with get_cursor() as cur:
         resolved_variant_id = _resolve_variant_id(cur, variant_id)
@@ -1057,7 +1064,7 @@ def get_gantt(
 
         # ── Projekte + Ist-Status (analog project_planning_status) ─────────
         cur.execute("""
-            SELECT p.project_id, p.project_name, p.customer,
+            SELECT p.project_id, p.project_name, p.customer, p.jira_id,
                    p.target_hours, p.impl_hours AS plan_impl,
                    p.test_hours   AS plan_test,
                    p.due_date, p.color_hexcode
@@ -1165,7 +1172,16 @@ def get_gantt(
         # "vollständig verplant" = jene Projekte, für die auf der
         # Planungsseite ein Liefertermin IST berechnet wird.
         is_complete = diff <= 0 or (0 < diff < 15)
-        if not is_complete:
+
+        ist_kw = None
+        if is_complete:
+            base_date_for_next_week = last_end_map.get(pid, date.today())
+            ist_kw = _next_week_key(base_date_for_next_week)
+
+        # Wenn "Vollständig geplant" aktiv ist: nur vollständig verplante
+        # Projekte anzeigen. Sonst: alle Projekte, für die überhaupt
+        # Planungseinträge existieren (bar_start_map/bar_end_map gesetzt).
+        if only_complete and not is_complete:
             continue
         if pid not in bar_start_map or pid not in bar_end_map:
             continue
@@ -1178,10 +1194,13 @@ def get_gantt(
         result_projects.append({
             "project_id":     pid,
             "project_name":   p["project_name"],
+            "jira_id":        p["jira_id"],
             "color_hexcode":  p["color_hexcode"],
             "target_hours":   p["target_hours"],
             "due_date":       str(p["due_date"]) if p["due_date"] else None,
             "due_kw":         due_kw,
+            "ist_kw":         ist_kw,
+            "is_complete":    is_complete,
             "bar_start_date": str(bar_start_map[pid]),
             "bar_end_date":   str(bar_end_map[pid]),
         })

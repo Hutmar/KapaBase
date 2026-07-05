@@ -53,7 +53,13 @@
     min-width: 90px;
     box-sizing: border-box;
 }
-.gantt-header-table tr.kw-row th.proj-col { min-width: 240px; text-align: left; }
+.gantt-header-table tr.kw-row th.proj-col {
+    min-width: 240px;
+    text-align: left;
+    cursor: pointer;
+    user-select: none;
+}
+.gantt-header-table tr.kw-row th.proj-col:hover { color: var(--text); }
 .kw-header-current { color: var(--accent) !important; border-bottom: 2px solid var(--accent) !important; }
 
 .gantt-body-table td.proj-name {
@@ -63,7 +69,7 @@
     z-index: 5;
     border-right: 1px solid var(--border);
     white-space: nowrap;
-    padding: 8px 10px;
+    padding: 4px 10px;
     min-width: 240px;
     box-sizing: border-box;
 }
@@ -71,13 +77,53 @@
     padding: 0;
     border: 1px solid rgba(42,48,80,0.3);
     min-width: 90px;
-    height: 46px;
+    height: 34px;
     vertical-align: middle;
     text-align: center;
     box-sizing: border-box;
     overflow: hidden;
+    position: relative;
 }
 .gantt-bar-cell { height: 100%; width: 100%; }
+
+.gantt-marker-soll {
+    position: absolute;
+    top: 1px;
+    left: 2px;
+    width: fit-content;
+    max-width: calc(100% - 4px);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 11px;
+    padding: 0 3px;
+    border-radius: 2px;
+    color: #fff;
+    background: rgba(230,126,34,0.92);
+    z-index: 2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+}
+.gantt-marker-ist {
+    position: absolute;
+    bottom: 1px;
+    right: 2px;
+    font-size: 13px;
+    line-height: 1;
+    color: #2ECC71;
+    font-weight: 700;
+    z-index: 2;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+
+.gantt-jira-link {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+.gantt-jira-link:hover { opacity: 1; }
 
 .gantt-empty {
     text-align: center;
@@ -119,6 +165,11 @@
 
     <div id="filterBox" class="centered-filter-container">
         <div class="filter-box">
+            <label class="flex-gap text-dim" style="font-size:12px">
+                <input type="checkbox" id="only-complete" checked style="width:auto" onchange="loadGantt()">
+                Vollständig geplant
+            </label>
+
             <label class="flex-gap text-dim" style="font-size:12px">
                 <input type="checkbox" id="use-current-week" checked style="width:auto" onchange="loadGantt()">
                 Ab aktueller KW
@@ -167,6 +218,9 @@
 let ganttData = null;
 let selectedVariantId = null;
 let _allAvailableWeeksForDropdown = null;
+let sortMode = 'default'; // 'default' | 'ist'
+let lastRenderedWeeks = null;
+let jiraBaseUrl = '';
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
@@ -187,6 +241,16 @@ async function api(method, url, body = null) {
         throw new Error(errorData.detail || errorData.message || "Unbekannter Fehler");
     }
     return await response.json();
+}
+
+// ── Jira-Base-URL laden (für Icon-Link neben Projektname) ──────────────────────
+async function loadJiraConfig() {
+    try {
+        const cfg = await api('GET', '/api/sync/config/jira_base_url');
+        jiraBaseUrl = cfg.base_url || '';
+    } catch(e) {
+        // Falls kein Endpunkt: stille Ignorierung
+    }
 }
 
 // ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
@@ -221,14 +285,35 @@ function dateFromIso(s) {
     return new Date(Date.UTC(y, m - 1, d));
 }
 
+// ── Sortierung umschalten ────────────────────────────────────────────────────
+function toggleSort() {
+    sortMode = (sortMode === 'default') ? 'ist' : 'default';
+    if (lastRenderedWeeks) renderGantt(lastRenderedWeeks);
+}
+
+function getSortedProjects() {
+    const projects = [...((ganttData && ganttData.projects) || [])];
+    if (sortMode === 'ist') {
+        projects.sort((a, b) => {
+            const av = a.ist_kw || '9999-W99';
+            const bv = b.ist_kw || '9999-W99';
+            return av < bv ? -1 : av > bv ? 1 : 0;
+        });
+    }
+    return projects;
+}
+
 // ── Laden ──────────────────────────────────────────────────────────────────────
 async function loadGantt() {
     const useCurrentWeekCheckbox = document.getElementById('use-current-week');
+    const onlyCompleteCheckbox   = document.getElementById('only-complete');
     const startWeekSelect = document.getElementById('start-week-select');
     const endWeekSelect   = document.getElementById('end-week-select');
 
-    const useCurrent = useCurrentWeekCheckbox.checked;
-    let url = `/api/planning/gantt?use_current_week=${useCurrent}`;
+    const useCurrent   = useCurrentWeekCheckbox.checked;
+    const onlyComplete = onlyCompleteCheckbox.checked;
+
+    let url = `/api/planning/gantt?use_current_week=${useCurrent}&only_complete=${onlyComplete}`;
     if (selectedVariantId !== null) url += `&variant_id=${selectedVariantId}`;
 
     let selectedStartWeek = startWeekSelect.value;
@@ -327,9 +412,23 @@ function populateWeekDropdown(selectId, weeks, currentVal, defaultLabel) {
     });
 }
 
+// ── Jira-Icon-Link ─────────────────────────────────────────────────────────────
+function jiraIconLink(jiraId) {
+    if (!jiraId) return '';
+    const href = jiraBaseUrl ? `${jiraBaseUrl}/browse/${jiraId}` : '#';
+    return `<a href="${href}" target="_blank" rel="noopener" class="gantt-jira-link" title="Jira: ${esc(jiraId)}" onclick="event.stopPropagation()">
+        <svg width="13" height="13" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
+            <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
+            <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
+        </svg>
+    </a>`;
+}
+
 // ── Rendern ────────────────────────────────────────────────────────────────────
 function renderGantt(weeks) {
-    const projects = (ganttData && ganttData.projects) || [];
+    lastRenderedWeeks = weeks;
+    const projects = getSortedProjects();
 
     const today     = new Date();
     const todayIso  = getIsoWeek(today);
@@ -357,7 +456,11 @@ function renderGantt(weeks) {
     monthGroups.forEach(g => { monthRowHtml += `<th colspan="${g.colspan}">${g.label}</th>`; });
     monthRowHtml += '</tr>';
 
-    let kwRowHtml = '<tr class="kw-row"><th class="proj-col">Projekt</th>';
+    const sortTitle = sortMode === 'ist'
+        ? 'Sortiert nach Liefertermin Ist (aufsteigend) – klicken zum Zurücksetzen'
+        : 'Standard-Sortierung – klicken zum Sortieren nach Liefertermin Ist';
+
+    let kwRowHtml = `<tr class="kw-row"><th class="proj-col" onclick="toggleSort()" title="${sortTitle}">Projekt ⇅${sortMode === 'ist' ? ' <span style="color:var(--accent)">(Liefertermin Ist)</span>' : ''}</th>`;
     weeks.forEach(wk => {
         const isCurrent = (wk === currentWk);
         const isPast    = wk < currentWk;
@@ -378,22 +481,22 @@ function renderGantt(weeks) {
 
     let tbody = '';
     if (projects.length === 0) {
-        tbody = `<tr><td colspan="${weeks.length + 1}" class="gantt-empty">Keine vollständig verplanten Projekte im gewählten Zeitraum / Variante.</td></tr>`;
+        tbody = `<tr><td colspan="${weeks.length + 1}" class="gantt-empty">Keine Projekte im gewählten Zeitraum / Variante gefunden.</td></tr>`;
     } else {
         projects.forEach(p => {
             const color   = p.color_hexcode || '#555';
             const barStart = dateFromIso(p.bar_start_date);
             const barEnd   = dateFromIso(p.bar_end_date);
 
+            const rowTitle = `Planwert: ${Math.round(p.target_hours)}h`
+                + (p.due_date ? ` | Liefertermin Soll: ${p.due_date}` : '');
+
             let row = `<tr>
-                <td class="proj-name">
-                    <div style="display:flex;align-items:center;gap:8px">
-                        <span style="width:3px;height:32px;background:${color};border-radius:2px;flex-shrink:0"></span>
-                        <div>
-                            <div style="font-weight:600">${esc(p.project_name)}</div>
-                            <div style="font-size:10px;color:var(--text2)">Planwert: ${Math.round(p.target_hours)}h</div>
-                            <div style="font-size:10px;color:var(--text2)">Liefertermin Soll: ${p.due_date || '–'}</div>
-                        </div>
+                <td class="proj-name" title="${esc(rowTitle)}">
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <span style="width:3px;height:16px;background:${color};border-radius:2px;flex-shrink:0"></span>
+                        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis">${esc(p.project_name)}</span>
+                        ${jiraIconLink(p.jira_id)}
                     </div>
                 </td>`;
 
@@ -401,12 +504,21 @@ function renderGantt(weeks) {
                 const mon = weekMonday(wk);
                 const fri = weekFriday(wk);
                 const overlaps = mon <= barEnd && fri >= barStart;
+
+                let cellContent = '';
                 if (overlaps) {
-                    const title = `${esc(p.project_name)}: ${p.bar_start_date} – ${p.bar_end_date}`;
-                    row += `<td title="${title}"><div class="gantt-bar-cell" style="background:${color}"></div></td>`;
-                } else {
-                    row += `<td></td>`;
+                    const barTitle = `${esc(p.project_name)}: ${p.bar_start_date} – ${p.bar_end_date}`;
+                    cellContent += `<div class="gantt-bar-cell" style="background:${color}" title="${barTitle}"></div>`;
                 }
+                if (p.due_kw && wk === p.due_kw) {
+                    const dateLabel = p.due_date ? fmtDate(dateFromIso(p.due_date)) : '';
+                    cellContent += `<div class="gantt-marker-soll">${dateLabel}</div>`;
+                }
+                if (p.ist_kw && wk === p.ist_kw) {
+                    cellContent += `<div class="gantt-marker-ist" title="Liefertermin Ist (KW ${parseInt(p.ist_kw.split('-W')[1])})">✓</div>`;
+                }
+
+                row += `<td>${cellContent}</td>`;
             });
 
             row += '</tr>';
@@ -494,6 +606,7 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleTimeRangeFilters();
         loadGantt();
     });
+    loadJiraConfig();
     loadGantt();
 });
 </script>
