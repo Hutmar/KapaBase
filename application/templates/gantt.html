@@ -54,10 +54,15 @@
     box-sizing: border-box;
 }
 .gantt-header-table tr.kw-row th.proj-col {
+    width: 240px;
+    max-width: 240px;
     min-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
     text-align: left;
     cursor: pointer;
     user-select: none;
+    box-sizing: border-box;
 }
 .gantt-header-table tr.kw-row th.proj-col:hover { color: var(--text); }
 .kw-header-current { color: var(--accent) !important; border-bottom: 2px solid var(--accent) !important; }
@@ -70,7 +75,10 @@
     border-right: 1px solid var(--border);
     white-space: nowrap;
     padding: 4px 10px;
+    width: 240px;
+    max-width: 240px;
     min-width: 240px;
+    overflow: hidden;
     box-sizing: border-box;
 }
 .gantt-body-table td {
@@ -108,7 +116,7 @@
 .gantt-marker-ist {
     position: absolute;
     bottom: 1px;
-    right: 2px;
+    left: 2px;
     font-size: 13px;
     line-height: 1;
     color: #2ECC71;
@@ -438,7 +446,7 @@ function renderGantt(weeks) {
     const COL_KW   = 90;
 
     const colgroupHtml = `<colgroup>
-        <col style="width:${COL_PROJ}px;min-width:${COL_PROJ}px">
+        <col style="width:${COL_PROJ}px;min-width:${COL_PROJ}px;max-width:${COL_PROJ}px">
         ${weeks.map(() => `<col style="width:${COL_KW}px;min-width:${COL_KW}px">`).join('')}
     </colgroup>`;
 
@@ -493,9 +501,9 @@ function renderGantt(weeks) {
 
             let row = `<tr>
                 <td class="proj-name" title="${esc(rowTitle)}">
-                    <div style="display:flex;align-items:center;gap:6px">
+                    <div style="display:flex;align-items:center;gap:6px;width:100%;overflow:hidden">
                         <span style="width:3px;height:16px;background:${color};border-radius:2px;flex-shrink:0"></span>
-                        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis">${esc(p.project_name)}</span>
+                        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${esc(p.project_name)}</span>
                         ${jiraIconLink(p.jira_id)}
                     </div>
                 </td>`;

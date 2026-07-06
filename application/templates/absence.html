@@ -127,7 +127,12 @@ async function init() {
         document.getElementById('toggle-summary').textContent = '▼';
     }
 
-    document.getElementById('f-from').addEventListener('change', updateCalendarWeek);
+    // "Von" geändert -> "Bis" automatisch auf dasselbe Datum setzen
+    document.getElementById('f-from').addEventListener('change', function() {
+        document.getElementById('f-to').value = this.value;
+        updateCalendarWeek({ target: document.getElementById('f-from') });
+        updateCalendarWeek({ target: document.getElementById('f-to') });
+    });
     document.getElementById('f-to').addEventListener('change', updateCalendarWeek);
 }
 
