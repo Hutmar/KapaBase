@@ -16,7 +16,7 @@ CREATE TABLE roles (
 	role roleType not null
 );
 
-CREATE TYPE absenceType AS ENUM ('Urlaub', 'Krank', 'GLAZ', 'Other');
+CREATE TYPE absenceType AS ENUM ('Urlaub', 'Krank', 'GLAZ', 'Other', 'Teamday');
 
 CREATE TABLE absence (
 	absence_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

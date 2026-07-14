@@ -6,7 +6,10 @@
     <div class="card-header">
         <h1>Abwesenheitsverwaltung</h1>
         {% if has_edit_rights %}
-        <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
+        <div class="flex-gap">
+            <button class="btn btn-ghost" onclick="openTeamdayModal()">+ Teamtag</button>
+            <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
+        </div>
         {% endif %}
     </div>
 
@@ -32,6 +35,26 @@
         </div>
     </div>
 
+    <div style="margin-bottom: 24px;">
+        <h2>
+            Teamtage
+            <button id="toggle-teamdays" class="btn btn-ghost btn-xs" onclick="toggleTeamdaysTable()">▼</button>
+        </h2>
+        <div id="teamdays-table-container">
+            <table style="width: 100%;">
+                <thead>
+                    <tr>
+                        <th>Datum</th>
+                        <th>KW</th>
+                        <th>Anzahl MA</th>
+                        <th style="width:80px"></th>
+                    </tr>
+                </thead>
+                <tbody id="teamday-list-body"></tbody>
+            </table>
+        </div>
+    </div>
+
     <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
         <label class="text-dim" style="white-space:nowrap">Mitarbeiter:</label>
         <select id="filter-staff" style="max-width:200px" onchange="filterStaffChanged()">
@@ -52,6 +75,7 @@
     </table>
 </div>
 
+<!-- Modal: Neue/Bearbeiten Abwesenheit -->
 <div class="modal-backdrop" id="modal-backdrop">
     <div class="modal">
         <div class="modal-title" id="modal-title">Neue Abwesenheit</div>
@@ -78,12 +102,36 @@
                 <option>Krank</option>
                 <option>GLAZ</option>
                 <option>Other</option>
+                <option>Teamday</option>
             </select>
         </div>
 
         <div class="modal-footer">
             <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
             <button class="btn btn-primary" onclick="saveAbsence()">Speichern</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Teamtag anlegen -->
+<div class="modal-backdrop" id="teamday-modal-backdrop">
+    <div class="modal" style="width:min(420px,95vw)">
+        <div class="modal-title">Teamtag anlegen</div>
+        <div id="teamday-modal-alert"></div>
+
+        <div class="form-row">
+            <label>Datum *</label>
+            <input id="tf-day" type="date">
+            <span id="tf-day-cw" class="text-dim" style="margin-left: 8px;"></span>
+        </div>
+        <div class="text-dim" style="font-size:11px;margin-top:4px">
+            Trägt bei allen aktiven Mitarbeitern, die an diesem Tag noch keine Abwesenheit
+            eingetragen haben, automatisch eine Abwesenheit vom Typ "Teamday" ein.
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeTeamdayModal()">Abbrechen</button>
+            <button class="btn btn-primary" onclick="saveTeamday()">Anlegen</button>
         </div>
     </div>
 </div>
@@ -94,6 +142,7 @@
 let editingId = null;
 const STAFF_FILTER_KEY = 'absenceStaffFilter';
 const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed';
+const TEAMDAYS_COLLAPSED_KEY = 'absenceTeamdaysCollapsed';
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
 async function init() {
@@ -117,14 +166,24 @@ async function init() {
 
     loadAbsences();
     loadAbsenceSummary();
+    loadTeamdaysList();
 
-    const isCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
-    if (isCollapsed) {
+    const isSummaryCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
+    if (isSummaryCollapsed) {
         document.getElementById('summary-table-container').style.display = 'none';
         document.getElementById('toggle-summary').textContent = '►';
     } else {
         document.getElementById('summary-table-container').style.display = '';
         document.getElementById('toggle-summary').textContent = '▼';
+    }
+
+    const isTeamdaysCollapsed = localStorage.getItem(TEAMDAYS_COLLAPSED_KEY) === 'true';
+    if (isTeamdaysCollapsed) {
+        document.getElementById('teamdays-table-container').style.display = 'none';
+        document.getElementById('toggle-teamdays').textContent = '►';
+    } else {
+        document.getElementById('teamdays-table-container').style.display = '';
+        document.getElementById('toggle-teamdays').textContent = '▼';
     }
 
     // "Von" geändert -> "Bis" automatisch auf dasselbe Datum setzen
@@ -134,6 +193,10 @@ async function init() {
         updateCalendarWeek({ target: document.getElementById('f-to') });
     });
     document.getElementById('f-to').addEventListener('change', updateCalendarWeek);
+
+    document.getElementById('tf-day').addEventListener('change', function() {
+        document.getElementById('tf-day-cw').textContent = `(KW ${getCalendarWeek(this.value)})`;
+    });
 }
 
 function filterStaffChanged() {
@@ -170,6 +233,21 @@ function toggleSummaryTable() {
         container.style.display = 'none';
         button.textContent = '►';
         localStorage.setItem(SUMMARY_COLLAPSED_KEY, 'true');
+    }
+}
+
+function toggleTeamdaysTable() {
+    const container = document.getElementById('teamdays-table-container');
+    const button = document.getElementById('toggle-teamdays');
+    const isCollapsed = container.style.display === 'none';
+    if (isCollapsed) {
+        container.style.display = '';
+        button.textContent = '▼';
+        localStorage.setItem(TEAMDAYS_COLLAPSED_KEY, 'false');
+    } else {
+        container.style.display = 'none';
+        button.textContent = '►';
+        localStorage.setItem(TEAMDAYS_COLLAPSED_KEY, 'true');
     }
 }
 
@@ -226,6 +304,56 @@ async function loadAbsenceSummary() {
     }
 }
 
+// ── Teamtage-Übersicht ───────────────────────────────────────────────────────
+async function loadTeamdaysList() {
+    const tbody = document.getElementById('teamday-list-body');
+    tbody.innerHTML = `<tr><td colspan="4" class="text-dim">Lädt…</td></tr>`;
+    try {
+        const rows = await api('GET', '/api/absence/teamdays');
+        if (rows.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="4" class="text-dim">Keine Teamtage vorhanden.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td class="text-mono">${r.day}</td>
+                <td class="text-mono">KW ${getCalendarWeek(r.day)}</td>
+                <td class="text-mono">${r.staff_count}</td>
+                <td>
+                    ${hasEditRights ? `<button class="btn btn-danger btn-xs" onclick="deleteTeamday('${r.day}')" title="Teamtag für alle Mitarbeiter löschen">✕</button>` : ''}
+                </td>
+            </tr>
+        `).join('');
+    } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-dim">Fehler beim Laden.</td></tr>`;
+    }
+}
+
+async function deleteTeamday(day) {
+    if (!confirm(`Teamtag ${day} für alle Mitarbeiter wirklich löschen?`)) return;
+    try {
+        await api('DELETE', `/api/absence/teamday/${day}`);
+        toast('Teamtag gelöscht');
+        loadTeamdaysList();
+        loadAbsences();
+        loadAbsenceSummary();
+    } catch(e) {
+        toast(e.message, 'error');
+    }
+}
+
+function absenceTypeBadge(type) {
+    const colors = {
+        'Urlaub':  ['rgba(74,144,217,0.15)',  '#4A90D9'],
+        'Krank':   ['rgba(231,76,60,0.15)',   '#E74C3C'],
+        'GLAZ':    ['rgba(155,89,182,0.15)',  '#9B59B6'],
+        'Teamday': ['rgba(46,204,113,0.15)',  '#2ECC71'],
+        'Other':   ['rgba(136,146,170,0.15)', '#8892aa'],
+    };
+    const [bg, fg] = colors[type] || colors['Other'];
+    return `<span class="badge" style="background:${bg};color:${fg}">${type}</span>`;
+}
+
 async function loadAbsences() {
     const staff = document.getElementById('filter-staff').value;
     const url = staff ? `/api/absence/?shortname=${staff}` : '/api/absence/';
@@ -237,25 +365,29 @@ async function loadAbsences() {
     if (rows.length === 0) {
         absenceBody.innerHTML = `<tr><td colspan="5" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
     } else {
-        absenceBody.innerHTML = rows.map(a => `
+        absenceBody.innerHTML = rows.map(a => {
+            const isTeamday = a.absence_type === 'Teamday';
+            return `
             <tr>
                 <td class="text-mono">${a.shortname}</td>
                 <td>${a.absence_from}</td>
                 <td>${a.absence_to}</td>
-                <td><span class="badge" style="background:rgba(74,144,217,0.15);color:#4A90D9">${a.absence_type}</span></td>
+                <td>${absenceTypeBadge(a.absence_type)}</td>
                 <td>
                     <div class="flex-gap">
                     ${hasEditRights ? `
                         <button class="btn btn-ghost btn-xs" onclick="openModal(${a.absence_id})">✎</button>
-                        <button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>
+                        ${isTeamday ? '' : `<button class="btn btn-danger btn-xs" onclick="deleteAbsence(${a.absence_id})">✕</button>`}
                     ` : '<span class="text-dim" style="font-size:12px"></span>'}
                     </div>
                 </td>
             </tr>
-        `).join('');
+        `;
+        }).join('');
     }
 }
 
+// ── Modal: Neue/Bearbeiten Abwesenheit ──────────────────────────────────────────
 async function openModal(id = null) {
     editingId = id;
     document.getElementById('modal-alert').innerHTML = '';
@@ -279,13 +411,10 @@ async function openModal(id = null) {
         ['f-from', 'f-to'].forEach(id => document.getElementById(id).value = '');
         document.getElementById('f-type').value = 'Urlaub';
         const currentStaffFilter = document.getElementById('filter-staff').value;
-        if (currentStaffFilter) {
-            document.getElementById('f-staff').value = currentStaffFilter;
-            document.getElementById('f-staff').disabled = true;
-        } else {
-            document.getElementById('f-staff').disabled = false;
-        }
+        document.getElementById('f-staff').value = currentStaffFilter || '';
+        document.getElementById('f-staff').disabled = false;
     }
+
     document.getElementById('modal-backdrop').classList.add('open');
 }
 
@@ -294,7 +423,7 @@ function closeModal() {
 }
 
 async function saveAbsence() {
-    const alert = document.getElementById('modal-alert');
+    const alertEl = document.getElementById('modal-alert');
     const payload = {
         shortname:    document.getElementById('f-staff').value,
         absence_from: document.getElementById('f-from').value,
@@ -314,10 +443,20 @@ async function saveAbsence() {
             msg += ` – ${result.deleted_plannings_count} Planungen wurden entfernt`;
         }
         toast(msg);
+
+        // Mitarbeiter-Filter (und damit die Tabelle) an den im Dialog
+        // gewählten Mitarbeiter anpassen, damit der Eintrag sichtbar wird.
+        const savedStaff = payload.shortname;
+        if (savedStaff && document.getElementById('filter-staff').value !== savedStaff) {
+            document.getElementById('filter-staff').value = savedStaff;
+            localStorage.setItem(STAFF_FILTER_KEY, savedStaff);
+        }
+
         loadAbsences();
         loadAbsenceSummary();
+        loadTeamdaysList();
     } catch (e) {
-        alert.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
+        alertEl.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
     }
 }
 
@@ -328,8 +467,43 @@ async function deleteAbsence(id) {
         toast('Gelöscht');
         loadAbsences();
         loadAbsenceSummary();
+        loadTeamdaysList();
     } catch (e) {
         toast(e.detail || e.message, 'error');
+    }
+}
+
+// ── Modal: Teamtag anlegen ───────────────────────────────────────────────────
+function openTeamdayModal() {
+    document.getElementById('teamday-modal-alert').innerHTML = '';
+    document.getElementById('tf-day').value = '';
+    document.getElementById('tf-day-cw').textContent = '';
+    document.getElementById('teamday-modal-backdrop').classList.add('open');
+}
+
+function closeTeamdayModal() {
+    document.getElementById('teamday-modal-backdrop').classList.remove('open');
+}
+
+async function saveTeamday() {
+    const alertEl = document.getElementById('teamday-modal-alert');
+    const day = document.getElementById('tf-day').value;
+    if (!day) {
+        alertEl.innerHTML = '<div class="alert alert-error">Bitte ein Datum wählen</div>';
+        return;
+    }
+    try {
+        const result = await api('POST', '/api/absence/teamday', { day });
+        closeTeamdayModal();
+        let msg = `Teamtag angelegt – ${result.created_count} Mitarbeiter eingetragen`;
+        if (result.skipped_count > 0) msg += `, ${result.skipped_count} bereits abwesend übersprungen`;
+        if (result.deleted_plannings_count > 0) msg += `, ${result.deleted_plannings_count} Planungen entfernt`;
+        toast(msg);
+        loadTeamdaysList();
+        loadAbsences();
+        loadAbsenceSummary();
+    } catch(e) {
+        alertEl.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
     }
 }
 

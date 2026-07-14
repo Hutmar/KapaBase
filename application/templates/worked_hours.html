@@ -50,18 +50,53 @@
   <div class="modal">
     <div class="modal-title" id="modal-title">Neuer Eintrag</div>
     <div id="modal-alert"></div>
+
     <div class="form-row">
       <label>Datum *</label>
       <input id="f-day" type="date">
     </div>
-    <div class="form-row">
-      <label>Impl-Stunden</label>
-      <input id="f-impl" type="number" min="0" value="0">
+
+    <div class="form-row" style="align-items:flex-start">
+      <label style="padding-top:6px">Erfassungsmodus</label>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text);font-size:13px">
+          <input type="radio" name="entry-mode" value="soll" checked style="width:auto" onchange="onModeChange()">
+          Sollstunden (Ist-Stunden dieses Eintrags direkt eingeben)
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text);font-size:13px">
+          <input type="radio" name="entry-mode" value="offen" style="width:auto" onchange="onModeChange()">
+          Offene Stunden (verbleibenden Rest nach diesem Eintrag eingeben)
+        </label>
+      </div>
     </div>
-    <div class="form-row">
-      <label>Test-Stunden</label>
-      <input id="f-test" type="number" min="0" value="0">
+
+    <!-- Sollstunden-Modus: direkte Eingabe der Ist-Stunden dieses Eintrags -->
+    <div id="fields-soll">
+      <div class="form-row">
+        <label>Impl-Stunden</label>
+        <input id="f-impl" type="number" min="0" value="0">
+      </div>
+      <div class="form-row">
+        <label>Test-Stunden</label>
+        <input id="f-test" type="number" min="0" value="0">
+      </div>
     </div>
+
+    <!-- Offene-Stunden-Modus: Eingabe des gewünschten Rests, Ist-Stunden werden zurückgerechnet -->
+    <div id="fields-offen" style="display:none">
+      <div class="form-row">
+        <label>Rest Impl (neu)</label>
+        <input id="f-impl-rest" type="number" step="0.5" value="0">
+      </div>
+      <div class="form-row">
+        <label>Rest Test (neu)</label>
+        <input id="f-test-rest" type="number" step="0.5" value="0">
+      </div>
+      <div class="text-dim" style="font-size:11px;margin-bottom:10px">
+        Die tatsächlich zu speichernden Ist-Stunden werden aus der Differenz zum aktuellen Rest berechnet.
+      </div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
       <button class="btn btn-primary" onclick="saveEntry()">Speichern</button>
@@ -79,6 +114,16 @@ const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 let currentProjectId = FIXED_PROJECT_ID || null;
 let editingId = null;
 let allEntries = [];
+
+// Aktuelle Soll-/Ist-Werte des geladenen Projekts (für Rest-Berechnung im Modal)
+let currentPlanImpl = 0;
+let currentPlanTest = 0;
+let currentSumImpl  = 0;
+let currentSumTest  = 0;
+
+// Rest ohne den gerade bearbeiteten Eintrag (Basis für die Rückrechnung im "Offene Stunden"-Modus)
+let remainingExclImpl = 0;
+let remainingExclTest = 0;
 
 async function init() {
   if (FIXED_PROJECT_ID) {
@@ -141,6 +186,11 @@ async function loadData(projectId) {
 
   const proj = data.project;
   const t = data.totals;
+
+  currentPlanImpl = Number(proj.plan_impl) || 0;
+  currentPlanTest = Number(proj.plan_test) || 0;
+  currentSumImpl  = Number(t.sum_impl) || 0;
+  currentSumTest  = Number(t.sum_test) || 0;
   
   const titleEl = document.getElementById('page-title');
   const subtitleEl = document.getElementById('page-subtitle');
@@ -156,9 +206,12 @@ async function loadData(projectId) {
   document.getElementById('page-subtitle').textContent =
     `Soll: ${proj.target_hours}h gesamt | ${proj.plan_impl}h Impl + ${proj.plan_test}h Test`;
 
-  const planImpl  = proj.plan_impl;
-  const planTest  = proj.plan_test;
+  const planImpl  = currentPlanImpl;
+  const planTest  = currentPlanTest;
   const planTotal = proj.target_hours;
+
+  const restImpl = planImpl - currentSumImpl;
+  const restTest = planTest - currentSumTest;
 
   document.getElementById('summary-row').innerHTML = `
     <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
@@ -176,6 +229,14 @@ async function loadData(projectId) {
     <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
       <div class="text-dim" style="font-size:11px;text-transform:uppercase">Ist Test</div>
       <div style="font-size:18px;font-weight:600;font-family:var(--font-mono);color:${t.sum_test>=planTest?'var(--accent2)':'var(--accent)'}">${t.sum_test}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto;border-color:${restImpl>0?'var(--danger)':'var(--accent2)'}">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Rest Impl</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono);color:${restImpl>0?'var(--danger)':'var(--accent2)'}">${restImpl}h</div>
+    </div>
+    <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto;border-color:${restTest>0?'var(--danger)':'var(--accent2)'}">
+      <div class="text-dim" style="font-size:11px;text-transform:uppercase">Rest Test</div>
+      <div style="font-size:18px;font-weight:600;font-family:var(--font-mono);color:${restTest>0?'var(--danger)':'var(--accent2)'}">${restTest}h</div>
     </div>
     <div class="card" style="padding:12px 16px;margin:0;flex:0 0 auto">
       <div class="text-dim" style="font-size:11px;text-transform:uppercase">Fortschritt</div>
@@ -207,21 +268,46 @@ async function loadData(projectId) {
   document.getElementById('burndown-chart').src = `/api/charts/burndown/${projectId}?_=${Date.now()}`;
 }
 
+// ── Modal ──────────────────────────────────────────────────────────────────────
+function onModeChange() {
+  const mode = document.querySelector('input[name="entry-mode"]:checked').value;
+  document.getElementById('fields-soll').style.display  = mode === 'soll'  ? '' : 'none';
+  document.getElementById('fields-offen').style.display = mode === 'offen' ? '' : 'none';
+}
+
 function openModal(id=null) {
   editingId = id;
   document.getElementById('modal-alert').innerHTML = '';
   document.getElementById('modal-title').textContent = id ? 'Eintrag bearbeiten' : 'Neuer Eintrag';
+
+  // Modus immer auf "Sollstunden" zurücksetzen beim Öffnen
+  document.querySelector('input[name="entry-mode"][value="soll"]').checked = true;
+  onModeChange();
+
+  let existingImpl = 0;
+  let existingTest = 0;
 
   if (id) {
     const e = allEntries.find(x => x.worked_hours_id === id);
     document.getElementById('f-day').value  = e.day;
     document.getElementById('f-impl').value = e.impl_hours;
     document.getElementById('f-test').value = e.test_hours;
+    existingImpl = Number(e.impl_hours) || 0;
+    existingTest = Number(e.test_hours) || 0;
   } else {
     document.getElementById('f-day').value  = new Date().toISOString().split('T')[0];
     document.getElementById('f-impl').value = 0;
     document.getElementById('f-test').value = 0;
   }
+
+  // Rest ohne den aktuell bearbeiteten Eintrag (Basis für Rückrechnung)
+  remainingExclImpl = currentPlanImpl - currentSumImpl + existingImpl;
+  remainingExclTest = currentPlanTest - currentSumTest + existingTest;
+
+  // Vorbelegung "Offene Stunden"-Felder: aktueller Rest (unverändert, falls nichts angepasst wird)
+  document.getElementById('f-impl-rest').value = currentPlanImpl - currentSumImpl;
+  document.getElementById('f-test-rest').value = currentPlanTest - currentSumTest;
+
   document.getElementById('modal-backdrop').classList.add('open');
 }
 
@@ -232,11 +318,30 @@ function closeModal() {
 async function saveEntry() {
   const al = document.getElementById('modal-alert');
   if (!currentProjectId) { al.innerHTML = '<div class="alert alert-error">Kein Projekt ausgewählt</div>'; return; }
+
+  const mode = document.querySelector('input[name="entry-mode"]:checked').value;
+  let implHours, testHours;
+
+  if (mode === 'offen') {
+    const desiredRestImpl = parseFloat(document.getElementById('f-impl-rest').value) || 0;
+    const desiredRestTest = parseFloat(document.getElementById('f-test-rest').value) || 0;
+    implHours = Math.round(remainingExclImpl - desiredRestImpl);
+    testHours = Math.round(remainingExclTest - desiredRestTest);
+
+    if (implHours < 0 || testHours < 0) {
+      al.innerHTML = '<div class="alert alert-error">Der eingegebene Rest ist größer als der aktuell offene Rest – bitte prüfen.</div>';
+      return;
+    }
+  } else {
+    implHours = parseInt(document.getElementById('f-impl').value) || 0;
+    testHours = parseInt(document.getElementById('f-test').value) || 0;
+  }
+
   const payload = {
     project_id: currentProjectId,
     day:        document.getElementById('f-day').value,
-    impl_hours: parseInt(document.getElementById('f-impl').value)||0,
-    test_hours: parseInt(document.getElementById('f-test').value)||0,
+    impl_hours: implHours,
+    test_hours: testHours,
   };
   try {
     if (editingId) await api('PUT',  `/api/worked_hours/${editingId}`, payload);

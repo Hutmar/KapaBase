@@ -15,6 +15,15 @@
     <select id="filter-proj" style="max-width:240px" onchange="loadTasks()">
       <option value="">– Alle –</option>
     </select>
+    <button class="btn btn-ghost" onclick="openPlanningStatus()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/>
+        <line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+      Planungsstatus öffnen
+    </button>
   </div>
 
   <table>
@@ -100,7 +109,11 @@ async function loadTasks() {
     <tr>
       <td>
         <span class="color-dot" style="background:${t.color_hexcode||'#555'}"></span>
-        ${t.task_name}
+        <a href="/planning_status?task_ids=${t.task_id}" target="_blank" rel="noopener noreferrer"
+           style="color:inherit;text-decoration:none" onmouseover="this.style.textDecoration='underline'"
+           onmouseout="this.style.textDecoration='none'">
+          ${t.task_name}
+        </a>
       </td>
       <td class="text-dim">${t.project_name||'–'}</td>
       <td>
@@ -116,6 +129,12 @@ async function loadTasks() {
       </td>
     </tr>
   `).join('');
+}
+
+function openPlanningStatus() {
+  if (!allTasks.length) { toast('Keine Tasks zum Anzeigen vorhanden', 'error'); return; }
+  const ids = allTasks.map(t => t.task_id).join(',');
+  window.open(`/planning_status?task_ids=${ids}`, '_blank');
 }
 
 async function openModal(id=null) {
@@ -162,13 +181,23 @@ async function saveTask() {
   }
 }
 
-async function deleteTask(id) {
-  if (!confirm('Task wirklich löschen?')) return;
+async function deleteTask(id, force = false) {
+  if (!force && !confirm('Task wirklich löschen?')) return;
   try {
-    await api('DELETE', `/api/tasks/${id}`);
+    const url = force ? `/api/tasks/${id}?force=true` : `/api/tasks/${id}`;
+    await api('DELETE', url);
     toast('Gelöscht');
     loadTasks();
-  } catch(e) { toast(e.message,'error'); }
+  } catch(e) {
+    if (e.message && e.message.startsWith('PLANNING_CONFLICT:')) {
+      const promptMessage = e.message.replace('PLANNING_CONFLICT:', '');
+      if (confirm(promptMessage)) {
+        deleteTask(id, true);
+      }
+    } else {
+      toast(e.message, 'error');
+    }
+  }
 }
 
 init();

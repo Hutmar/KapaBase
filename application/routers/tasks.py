@@ -124,9 +124,25 @@ def update_task(task_id: int, data: TaskUpdate):
 
 
 @router.delete("/{task_id}", status_code=204)
-def delete_task(task_id: int):
+def delete_task(task_id: int, force: bool = False):
+    """
+    Task löschen. Sind Planungseinträge referenziert, wird ohne force=True
+    ein 409-Konflikt mit "PLANNING_CONFLICT:"-Präfix zurückgegeben (analog
+    zum Rollen-Löschen in routers/staff.py), damit das Frontend eine
+    Bestätigungsabfrage anzeigen und bei Bestätigung mit force=True erneut
+    aufrufen kann.
+    """
     with get_cursor(commit=True) as cur:
         cur.execute("SELECT COUNT(*) AS cnt FROM planning WHERE task_id = %s", (task_id,))
-        if cur.fetchone()["cnt"] > 0:
-            raise HTTPException(409, "Task ist in Planung referenziert")
+        cnt = cur.fetchone()["cnt"]
+
+        if cnt > 0:
+            if not force:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"PLANNING_CONFLICT:Für diesen Task existieren {cnt} Planungseinträge. "
+                           f"Sollen diese ebenfalls gelöscht werden?"
+                )
+            cur.execute("DELETE FROM planning WHERE task_id = %s", (task_id,))
+
         cur.execute("DELETE FROM tasks WHERE task_id = %s", (task_id,))

@@ -25,6 +25,9 @@ class AbsenceUpdate(BaseModel):
     absence_to: Optional[date] = None
     absence_type: Optional[str] = None
 
+class TeamdayCreate(BaseModel):
+    day: date
+
 # ── Hilfsfunktion: Überlappungsprüfung ────────────────────────────────────────
 def _check_overlap(cur, shortname: str, absence_from: date,
                    absence_to: date, exclude_id: Optional[int] = None):
@@ -159,6 +162,78 @@ def get_absence_summary(shortname: Optional[str] = None):
         cur.execute(query, params)
         return cur.fetchall()
 
+# ── Teamtage ───────────────────────────────────────────────────────────────────
+@router.get("/teamdays")
+def list_teamdays():
+    """
+    Alle distinct Teamtage (absence_type = 'Teamday'), inkl. Anzahl der
+    Mitarbeiter, die für den jeweiligen Tag eingetragen wurden.
+    """
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT absence_from AS day, COUNT(*) AS staff_count
+            FROM absence
+            WHERE absence_type = 'Teamday'
+            GROUP BY absence_from
+            ORDER BY absence_from DESC
+        """)
+        return cur.fetchall()
+
+@router.post("/teamday", status_code=201)
+def create_teamday(data: TeamdayCreate):
+    """
+    Legt einen Teamtag an: Für alle aktiven Mitarbeiter, die an diesem Tag
+    noch KEINE Abwesenheit eingetragen haben, wird eine neue Abwesenheit vom
+    Typ 'Teamday' für genau diesen einen Tag angelegt. Mitarbeiter mit
+    bestehender Abwesenheit an diesem Tag werden übersprungen.
+    """
+    day = data.day
+
+    with get_cursor(commit=True) as cur:
+        cur.execute("SELECT shortname FROM staff WHERE is_active = TRUE")
+        staff_list = [r["shortname"] for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT DISTINCT shortname FROM absence
+            WHERE absence_from <= %s AND absence_to >= %s
+        """, (day, day))
+        already_absent = {r["shortname"] for r in cur.fetchall()}
+
+        created: List[str] = []
+        skipped: List[str] = []
+
+        for shortname in staff_list:
+            if shortname in already_absent:
+                skipped.append(shortname)
+                continue
+            cur.execute("""
+                INSERT INTO absence (shortname, absence_from, absence_to, absence_type)
+                VALUES (%s, %s, %s, 'Teamday')
+            """, (shortname, day, day))
+            created.append(shortname)
+
+        deleted_plannings_total = 0
+        for shortname in created:
+            deleted_plannings_total += _delete_plannings_reduced_to_zero(cur, shortname, day, day)
+
+        return {
+            "day":                     str(day),
+            "created_count":           len(created),
+            "skipped_count":           len(skipped),
+            "skipped_staff":           skipped,
+            "deleted_plannings_count": deleted_plannings_total,
+        }
+
+@router.delete("/teamday/{day}", status_code=204)
+def delete_teamday(day: date):
+    """Löscht alle Teamtag-Abwesenheiten (absence_type='Teamday') für den angegebenen Tag."""
+    with get_cursor(commit=True) as cur:
+        cur.execute("""
+            DELETE FROM absence
+            WHERE absence_type = 'Teamday' AND absence_from = %s AND absence_to = %s
+        """, (day, day))
+
+# ── Standard-CRUD ────────────────────────────────────────────────────────────
 @router.post("/", status_code=201)
 def create_absence(data: AbsenceCreate):
     """
