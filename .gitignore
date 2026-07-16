@@ -5,3 +5,4 @@ __pycache__/
 *.pyd
 *.local
 sync.json
+sync_ignore.json
