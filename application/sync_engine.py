@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # ── Pfad zur Konfigurationsdatei ───────────────────────────────────────────────
 CONFIG_PATH = Path(__file__).parent / "sync.json"
 
+# ── Pfad zur Ignore-Liste (dauerhaft ausgeschlossene Projekte/Issues) ──────────
+IGNORE_PATH = Path(__file__).parent / "sync_ignore.json"
+
 
 # ── Datenklassen ───────────────────────────────────────────────────────────────
 
@@ -137,6 +140,67 @@ class SyncConfig:
         return None
 
 
+# ── Ignore-Liste: Projekte/Issues, die nie mehr synchronisiert werden sollen ───
+
+class SyncIgnoreStore:
+    """
+    Persistiert externe IDs (z.B. Jira-Keys), die dauerhaft von der
+    Synchronisierung ausgeschlossen werden sollen – gruppiert nach
+    Router und Sync-Quelle. Ablage als einfache JSON-Datei, analog zu
+    sync.json, damit keine DB-Migration nötig ist.
+
+    Struktur:
+    {
+        "projects": {
+            "jira_projects": ["PROJ-123", "PROJ-456"]
+        }
+    }
+    """
+
+    def __init__(self, path: Path = IGNORE_PATH):
+        self._path = path
+        self._data: dict = {}
+        self._load()
+
+    def _load(self) -> None:
+        if not self._path.exists():
+            self._data = {}
+            return
+        try:
+            with open(self._path, encoding="utf-8") as fh:
+                self._data = json.load(fh)
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.error("Konnte sync_ignore.json nicht lesen (%s) – starte mit leerer Liste.", exc)
+            self._data = {}
+
+    def _save(self) -> None:
+        try:
+            with open(self._path, "w", encoding="utf-8") as fh:
+                json.dump(self._data, fh, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            logger.error("Konnte sync_ignore.json nicht schreiben: %s", exc)
+
+    def get_ignored(self, router: str, source_id: str) -> list[str]:
+        return list(self._data.get(router, {}).get(source_id, []))
+
+    def is_ignored(self, router: str, source_id: str, external_id: str) -> bool:
+        return external_id in self._data.get(router, {}).get(source_id, [])
+
+    def add(self, router: str, source_id: str, external_id: str) -> None:
+        self._data.setdefault(router, {}).setdefault(source_id, [])
+        if external_id not in self._data[router][source_id]:
+            self._data[router][source_id].append(external_id)
+            self._save()
+            logger.info("Sync-Ignore hinzugefügt: %s/%s -> %s", router, source_id, external_id)
+
+    def remove(self, router: str, source_id: str, external_id: str) -> None:
+        lst = self._data.get(router, {}).get(source_id, [])
+        if external_id in lst:
+            lst.remove(external_id)
+            self._save()
+            logger.info("Sync-Ignore entfernt: %s/%s -> %s", router, source_id, external_id)
+
+
 # ── Abstrakte Basis-Klasse für Sync-Adapter ───────────────────────────────────
 
 class SyncAdapter(ABC):
@@ -186,5 +250,6 @@ def get_adapter(source_config: dict) -> SyncAdapter:
     return cls(source_config)
 
 
-# ── Globale Config-Instanz ─────────────────────────────────────────────────────
-sync_config = SyncConfig()
+# ── Globale Instanzen ───────────────────────────────────────────────────────────
+sync_config       = SyncConfig()
+sync_ignore_store = SyncIgnoreStore()

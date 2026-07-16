@@ -2,14 +2,18 @@
 routers/projects.py – Projektverwaltung (Tabelle: project)
 Inkl. Kapazitätsberechnung und Farbcode-Vorschlag
 """  
+import logging
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import date
 from enum import Enum
+from psycopg2 import IntegrityError
 from db import get_cursor
 from capacity import calculate_total_capacity  
+
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ── Enum für Projekt-Typ ───────────────────────────────────────────────────────
 class ProjectTypeEnum(str, Enum):
@@ -75,6 +79,24 @@ def _next_free_color() -> str:
             c = "#{:06X}".format(random.randint(0, 0xFFFFFF))
             if c not in used:
                 return c
+
+
+def _increment_color(hex_code: Optional[str]) -> str:
+    """
+    Inkrementiert einen Hexcode um 1 (z.B. '#4A90D9' -> '#4A90DA', mit
+    Überlauf zurück auf '#000000'). Wird verwendet, um bei einer
+    Unique-Constraint-Verletzung auf project.color_hexcode automatisch
+    einen freien Farbcode zu finden, ohne dem Nutzer im Dialog nur einen
+    generischen "Internal Server Error" anzuzeigen.
+    """
+    if not hex_code or not hex_code.startswith("#") or len(hex_code) != 7:
+        hex_code = "#000000"
+    try:
+        value = int(hex_code[1:], 16)
+    except ValueError:
+        value = 0
+    value = (value + 1) % 0x1000000
+    return "#{:06X}".format(value)
 
 
 def _delete_plannings_for_project(cur, project_id: int) -> int:
@@ -189,23 +211,46 @@ def create_project(data: ProjectBase):
         raise HTTPException(status_code=422,
                             detail="impl_hours + test_hours muss target_hours ergeben")  
 
-    # NEU: Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein
+    # Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein
     planned = data.planned
     if data.target_hours == 0:
         planned = False
 
     with get_cursor(commit=True) as cur:
-        cur.execute("""
-            INSERT INTO project
-            (project_name, customer, jira_id, target_hours, impl_hours, test_hours,
-            planned, start_date, due_date, remarks, done, color_hexcode, sort_order, project_type)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING project_id
-        """, (data.project_name, data.customer, data.jira_id,
-              data.target_hours, data.impl_hours, data.test_hours,
-              planned, data.start_date, data.due_date,
-              data.remarks, data.done, data.color_hexcode, data.sort_order, data.project_type.value))
-        return {"project_id": cur.fetchone()["project_id"]}  
+        color = data.color_hexcode
+        attempts = 0
+        new_id = None
+
+        while True:
+            try:
+                cur.execute("SAVEPOINT color_insert")
+                cur.execute("""
+                    INSERT INTO project
+                    (project_name, customer, jira_id, target_hours, impl_hours, test_hours,
+                    planned, start_date, due_date, remarks, done, color_hexcode, sort_order, project_type)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    RETURNING project_id
+                """, (data.project_name, data.customer, data.jira_id,
+                      data.target_hours, data.impl_hours, data.test_hours,
+                      planned, data.start_date, data.due_date,
+                      data.remarks, data.done, color, data.sort_order, data.project_type.value))
+                new_id = cur.fetchone()["project_id"]
+                cur.execute("RELEASE SAVEPOINT color_insert")
+                break
+            except IntegrityError as exc:
+                cur.execute("ROLLBACK TO SAVEPOINT color_insert")
+                logger.warning(
+                    "Farbcode %s beim Anlegen von Projekt '%s' bereits vergeben (%s) – "
+                    "inkrementiere automatisch auf nächsten freien Wert.",
+                    color, data.project_name, exc
+                )
+                color = _increment_color(color)
+                attempts += 1
+                if attempts > 500:
+                    logger.error("Konnte für Projekt '%s' keinen freien Farbcode finden.", data.project_name)
+                    raise HTTPException(status_code=500, detail="Konnte keinen freien Farbcode finden")
+
+        return {"project_id": new_id}  
 
 @router.put("/{project_id}")
 def update_project(project_id: int, data: ProjectUpdate):
@@ -236,24 +281,44 @@ def update_project(project_id: int, data: ProjectUpdate):
             raise HTTPException(status_code=422,
                                 detail="impl_hours + test_hours muss target_hours ergeben")  
 
-        # NEU: Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein –
+        # Ohne Soll-Stunden kann ein Projekt nicht "geplant" sein –
         # unabhängig davon, was der Client für "planned" übergeben hat
         if fields["target_hours"] == 0:
             fields["planned"] = False
 
-        cur.execute("""
-            UPDATE project SET
-            project_name=%s, customer=%s, jira_id=%s, target_hours=%s,
-            impl_hours=%s, test_hours=%s, planned=%s, start_date=%s,
-            due_date=%s, remarks=%s, done=%s, color_hexcode=%s, sort_order=%s, project_type=%s
-            WHERE project_id=%s
-        """, (fields["project_name"], fields["customer"], fields["jira_id"],
-              fields["target_hours"], fields["impl_hours"], fields["test_hours"],
-              fields["planned"], fields["start_date"], fields["due_date"],
-              fields["remarks"], fields["done"], fields["color_hexcode"],
-              fields["sort_order"], fields["project_type"], project_id))  
+        color = fields["color_hexcode"]
+        attempts = 0
 
-        # NEU: Wenn das Projekt von "geplant" auf "nicht geplant" wechselt
+        while True:
+            try:
+                cur.execute("SAVEPOINT color_update")
+                cur.execute("""
+                    UPDATE project SET
+                    project_name=%s, customer=%s, jira_id=%s, target_hours=%s,
+                    impl_hours=%s, test_hours=%s, planned=%s, start_date=%s,
+                    due_date=%s, remarks=%s, done=%s, color_hexcode=%s, sort_order=%s, project_type=%s
+                    WHERE project_id=%s
+                """, (fields["project_name"], fields["customer"], fields["jira_id"],
+                      fields["target_hours"], fields["impl_hours"], fields["test_hours"],
+                      fields["planned"], fields["start_date"], fields["due_date"],
+                      fields["remarks"], fields["done"], color,
+                      fields["sort_order"], fields["project_type"], project_id))
+                cur.execute("RELEASE SAVEPOINT color_update")
+                break
+            except IntegrityError as exc:
+                cur.execute("ROLLBACK TO SAVEPOINT color_update")
+                logger.warning(
+                    "Farbcode %s beim Aktualisieren von Projekt %s bereits vergeben (%s) – "
+                    "inkrementiere automatisch auf nächsten freien Wert.",
+                    color, project_id, exc
+                )
+                color = _increment_color(color)
+                attempts += 1
+                if attempts > 500:
+                    logger.error("Konnte für Projekt %s keinen freien Farbcode finden.", project_id)
+                    raise HTTPException(status_code=500, detail="Konnte keinen freien Farbcode finden")
+
+        # Wenn das Projekt von "geplant" auf "nicht geplant" wechselt
         # (manuell abgewählt ODER automatisch wegen target_hours=0),
         # werden alle bestehenden Planungseinträge entfernt.
         deleted_plannings_count = 0
