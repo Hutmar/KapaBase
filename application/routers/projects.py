@@ -330,6 +330,29 @@ def update_project(project_id: int, data: ProjectUpdate):
             "deleted_plannings_count": deleted_plannings_count,
         }  
 
+@router.delete("/{project_id}", status_code=204)
+def delete_project(project_id: int):
+    """
+    Projekt löschen.
+    Da planning.project_id, worked_hours.project_id und tasks.project_id
+    per Fremdschlüssel auf project verweisen (ohne ON DELETE CASCADE),
+    müssen vor dem eigentlichen Löschen zuerst:
+      - alle zugehörigen Planungseinträge entfernt werden (direkt über
+        project_id ODER indirekt über einen dem Projekt zugeordneten Task),
+      - alle erfassten Ist-Stunden (worked_hours) entfernt werden,
+      - zugeordnete Tasks von diesem Projekt gelöst werden (project_id -> NULL),
+        damit die Tasks selbst erhalten bleiben.
+    """
+    with get_cursor(commit=True) as cur:
+        cur.execute("SELECT project_id FROM project WHERE project_id = %s", (project_id,))
+        if not cur.fetchone():
+            raise HTTPException(status_code=404, detail="Projekt nicht gefunden")
+
+        _delete_plannings_for_project(cur, project_id)
+        cur.execute("DELETE FROM worked_hours WHERE project_id = %s", (project_id,))
+        cur.execute("UPDATE tasks SET project_id = NULL WHERE project_id = %s", (project_id,))
+        cur.execute("DELETE FROM project WHERE project_id = %s", (project_id,))
+
 @router.get("/reorder/bulk")
 def reorder_projects(order: List[dict]):
     """

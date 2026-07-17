@@ -2,12 +2,15 @@
 routers/tasks.py – Task-Verwaltung (Tabelle: tasks)
 """
 
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from psycopg2 import IntegrityError
 from db import get_cursor
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class TaskBase(BaseModel):
@@ -44,6 +47,25 @@ def _next_free_color() -> str:
         c = "#{:06X}".format(random.randint(0, 0xFFFFFF))
         if c not in used:
             return c
+
+
+def _increment_color(hex_code: Optional[str]) -> str:
+    """
+    Inkrementiert einen Hexcode um 1 (z.B. '#4A90D9' -> '#4A90DA', mit
+    Überlauf zurück auf '#000000'). Analog zu routers/projects.py –
+    wird verwendet, um bei einer Unique-Constraint-Verletzung auf
+    tasks.color_hexcode automatisch einen freien Farbcode zu finden, ohne
+    dem Nutzer im Dialog nur einen generischen "Internal Server Error"
+    anzuzeigen.
+    """
+    if not hex_code or not hex_code.startswith("#") or len(hex_code) != 7:
+        hex_code = "#000000"
+    try:
+        value = int(hex_code[1:], 16)
+    except ValueError:
+        value = 0
+    value = (value + 1) % 0x1000000
+    return "#{:06X}".format(value)
 
 
 @router.get("/")
@@ -91,13 +113,36 @@ def create_task(data: TaskBase):
     # Validierung vor dem Insert (bei project_id=None wird nichts geprüft –
     # Tasks können also ohne Projekt angelegt werden)
     _validate_project_type(data.project_id)
-    
+
     with get_cursor(commit=True) as cur:
-        cur.execute("""
-            INSERT INTO tasks (project_id, task_name, color_hexcode)
-            VALUES (%s, %s, %s) RETURNING task_id
-        """, (data.project_id, data.task_name, data.color_hexcode))
-        return {"task_id": cur.fetchone()["task_id"]}
+        color = data.color_hexcode
+        attempts = 0
+        new_id = None
+
+        while True:
+            try:
+                cur.execute("SAVEPOINT color_insert_task")
+                cur.execute("""
+                    INSERT INTO tasks (project_id, task_name, color_hexcode)
+                    VALUES (%s, %s, %s) RETURNING task_id
+                """, (data.project_id, data.task_name, color))
+                new_id = cur.fetchone()["task_id"]
+                cur.execute("RELEASE SAVEPOINT color_insert_task")
+                break
+            except IntegrityError as exc:
+                cur.execute("ROLLBACK TO SAVEPOINT color_insert_task")
+                logger.warning(
+                    "Farbcode %s beim Anlegen von Task '%s' bereits vergeben (%s) – "
+                    "inkrementiere automatisch auf nächsten freien Wert.",
+                    color, data.task_name, exc
+                )
+                color = _increment_color(color)
+                attempts += 1
+                if attempts > 500:
+                    logger.error("Konnte für Task '%s' keinen freien Farbcode finden.", data.task_name)
+                    raise HTTPException(status_code=500, detail="Konnte keinen freien Farbcode finden")
+
+        return {"task_id": new_id}
 
 
 @router.put("/{task_id}")

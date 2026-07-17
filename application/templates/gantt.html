@@ -73,12 +73,13 @@
     background: var(--bg2);
     z-index: 5;
     border-right: 1px solid var(--border);
-    white-space: nowrap;
+    white-space: normal;
+    text-align: left;
     padding: 4px 10px;
     width: 240px;
     max-width: 240px;
     min-width: 240px;
-    overflow: hidden;
+    overflow: visible;
     box-sizing: border-box;
 }
 .gantt-body-table td {
@@ -132,6 +133,14 @@
     opacity: 0.85;
 }
 .gantt-jira-link:hover { opacity: 1; }
+
+.project-name-link {
+    color: inherit;
+    font-size: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+.project-name-link:hover { text-decoration: underline; }
 
 .gantt-empty {
     text-align: center;
@@ -501,9 +510,11 @@ function renderGantt(weeks) {
 
             let row = `<tr>
                 <td class="proj-name" title="${esc(rowTitle)}">
-                    <div style="display:flex;align-items:center;gap:6px;width:100%;overflow:hidden">
+                    <div style="display:flex;align-items:center;gap:6px;width:100%">
                         <span style="width:3px;height:16px;background:${color};border-radius:2px;flex-shrink:0"></span>
-                        <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${esc(p.project_name)}</span>
+                        <a href="/planning_status?project_ids=${p.project_id}" class="project-name-link" target="_blank" rel="noopener noreferrer" style="flex:1;min-width:0">
+                            <span style="font-weight:600">${esc(p.project_name)}</span>
+                        </a>
                         ${jiraIconLink(p.jira_id)}
                     </div>
                 </td>`;

@@ -7,7 +7,7 @@
         <h1>Abwesenheitsverwaltung</h1>
         {% if has_edit_rights %}
         <div class="flex-gap">
-            <button class="btn btn-ghost" onclick="openTeamdayModal()">+ Teamtag</button>
+            <button class="btn btn-primary" onclick="openTeamdayModal()">+ Teamtag</button>
             <button class="btn btn-primary" onclick="openModal()">+ Neue Abwesenheit</button>
         </div>
         {% endif %}
@@ -67,11 +67,13 @@
                 <th>Mitarbeiter</th>
                 <th>Von</th>
                 <th>Bis</th>
+                <th>Tage</th>
                 <th>Typ</th>
                 <th style="width:80px"></th>
             </tr>
         </thead>
         <tbody id="absence-body"></tbody>
+        <tfoot id="absence-days-footer"></tfoot>
     </table>
 </div>
 
@@ -221,6 +223,16 @@ function updateCalendarWeek(event) {
     document.getElementById(cwElementId).textContent = `(KW ${getCalendarWeek(inputElement.value)})`;
 }
 
+// Anzahl der (Kalender-)Tage zwischen zwei Datums-Strings, inklusive beider
+// Endpunkte – analog zur Berechnung im Backend (/api/absence/summary).
+function calcDaysInclusive(fromStr, toStr) {
+    const from = new Date(fromStr);
+    const to = new Date(toStr);
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) return 0;
+    const diffMs = to.getTime() - from.getTime();
+    return Math.round(diffMs / 86400000) + 1;
+}
+
 function toggleSummaryTable() {
     const container = document.getElementById('summary-table-container');
     const button = document.getElementById('toggle-summary');
@@ -360,18 +372,24 @@ async function loadAbsences() {
     const rows = staff ? await api('GET', url) : [];
 
     const absenceBody = document.getElementById('absence-body');
+    const footer = document.getElementById('absence-days-footer');
     absenceBody.innerHTML = '';
+    footer.innerHTML = '';
 
     if (rows.length === 0) {
-        absenceBody.innerHTML = `<tr><td colspan="5" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
+        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
     } else {
+        let totalDays = 0;
         absenceBody.innerHTML = rows.map(a => {
             const isTeamday = a.absence_type === 'Teamday';
+            const days = calcDaysInclusive(a.absence_from, a.absence_to);
+            totalDays += days;
             return `
             <tr>
                 <td class="text-mono">${a.shortname}</td>
                 <td>${a.absence_from}</td>
                 <td>${a.absence_to}</td>
+                <td class="text-mono" style="text-align:center">${days}</td>
                 <td>${absenceTypeBadge(a.absence_type)}</td>
                 <td>
                     <div class="flex-gap">
@@ -384,6 +402,14 @@ async function loadAbsences() {
             </tr>
         `;
         }).join('');
+
+        footer.innerHTML = `
+            <tr>
+                <th colspan="3" style="text-align:right">Gesamt:</th>
+                <th class="text-mono" style="text-align:center">${totalDays}</th>
+                <th colspan="2"></th>
+            </tr>
+        `;
     }
 }
 
