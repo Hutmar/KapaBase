@@ -20,6 +20,7 @@ class StaffCreate(BaseModel):
     remark: Optional[str] = None
     is_active: bool = True
     roles: List[str] = []                 # z. B. ['Developer', 'Tester']
+    default_task_id: Optional[int] = None # Standard-Task (nur Anzeige in Planung, nicht gespeichert)
 
 class StaffUpdate(BaseModel):
     hours_per_week: Optional[Decimal] = None
@@ -28,6 +29,7 @@ class StaffUpdate(BaseModel):
     is_active: Optional[bool] = None
     roles: Optional[List[str]] = None
     force_delete_plannings: Optional[bool] = False
+    default_task_id: Optional[int] = None     # Standard-Task; wird immer gesetzt (auch null = entfernen)
 
 # ── Hilfsfunktion ──────────────────────────────────────────────────────────────
 
@@ -116,15 +118,16 @@ def list_staff():
     with get_cursor() as cur:
         cur.execute("""
             SELECT s.shortname, s.hours_per_week, s.hours_per_day,
-            s.remark, s.is_active,
+            s.remark, s.is_active, s.default_task_id, dt.task_name AS default_task_name,
             COALESCE(
                 json_agg(r.role ORDER BY r.role)
                 FILTER (WHERE r.role IS NOT NULL), '[]'
             ) AS roles
             FROM staff s
             LEFT JOIN roles r ON r.shortname = s.shortname
+            LEFT JOIN tasks dt ON dt.task_id = s.default_task_id
             GROUP BY s.shortname, s.hours_per_week, s.hours_per_day,
-            s.remark, s.is_active
+            s.remark, s.is_active, s.default_task_id, dt.task_name
             ORDER BY s.shortname
         """)
         staff_data = cur.fetchall()
@@ -158,10 +161,10 @@ def create_staff(data: StaffCreate):
 
     with get_cursor(commit=True) as cur:
         cur.execute("""
-            INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active, default_task_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
         """, (data.shortname, data.hours_per_week, hpd,
-              data.remark, data.is_active))
+              data.remark, data.is_active, data.default_task_id))
         _sync_roles(cur, data.shortname, data.roles)
 
     return {"shortname": data.shortname}
@@ -183,6 +186,12 @@ def update_staff(shortname: str, data: StaffUpdate):
         new_active = data.is_active if data.is_active is not None \
             else existing["is_active"]
 
+        # Standard-Task: das Frontend sendet dieses Feld beim Speichern des
+        # Mitarbeiter-Formulars immer explizit mit (auch null, um ihn zu
+        # entfernen) – daher wird der Wert direkt übernommen, statt wie bei
+        # anderen optionalen Feldern nur bei "not None" zu überschreiben.
+        new_default_task_id = data.default_task_id
+
         # 1. Hat der User explizit Stunden pro Tag eingegeben?
         if data.hours_per_day is not None:
             if not new_remark:
@@ -203,9 +212,9 @@ def update_staff(shortname: str, data: StaffUpdate):
         cur.execute("""
             UPDATE staff
             SET hours_per_week = %s, hours_per_day = %s,
-            remark = %s, is_active = %s
+            remark = %s, is_active = %s, default_task_id = %s
             WHERE shortname = %s
-        """, (new_hpw, new_hpd, new_remark, new_active, shortname))
+        """, (new_hpw, new_hpd, new_remark, new_active, new_default_task_id, shortname))
 
         if data.roles is not None:
             _sync_roles(cur, shortname, data.roles, data.force_delete_plannings)

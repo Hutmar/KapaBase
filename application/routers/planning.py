@@ -305,7 +305,7 @@ def get_planning(
                    r.role, r.role_id
             FROM staff s
             JOIN roles r ON r.shortname = s.shortname
-            WHERE r.role IN ('Developer', 'Tester')
+            WHERE r.role IN ('Developer', 'Tester', 'Other')
             AND s.is_active = TRUE
             ORDER BY r.role ASC, s.shortname ASC
         """)
@@ -475,6 +475,52 @@ def get_planning(
                 and max_worked_day[pid] > pl["end_date"]
             )
             plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(entry)
+
+        # ── Standard-Task automatisch einfügen (nur zur Anzeige!) ────────────
+        # Für Mitarbeiter mit hinterlegtem Standard-Task wird in aktuellen und
+        # zukünftigen Kalenderwochen, in denen weder eine echte Planung noch
+        # eine Abwesenheit vorhanden ist, der Standard-Task eingeblendet.
+        # Es wird NICHTS in der Tabelle "planning" gespeichert.
+        cur.execute("""
+            SELECT s.shortname, s.default_task_id,
+                   t.task_name, t.color_hexcode
+            FROM staff s
+            JOIN tasks t ON t.task_id = s.default_task_id
+            WHERE s.default_task_id IS NOT NULL
+        """)
+        default_task_map = {r["shortname"]: dict(r) for r in cur.fetchall()}
+
+        if default_task_map:
+            today_wk = _current_week_key()
+            for sr in staff_roles:
+                name = sr["shortname"]
+                dt = default_task_map.get(name)
+                if not dt:
+                    continue
+                for wk in weeks:
+                    if wk < today_wk:
+                        continue
+                    if absence_map.get(name, {}).get(wk):
+                        continue
+                    staff_week_entries = plan_map.get(name, {}).get(wk, [])
+                    if staff_week_entries:
+                        continue
+                    plan_map.setdefault(name, {}).setdefault(wk, []).append({
+                        "planning_id":     None,
+                        "task_id":         dt["default_task_id"],
+                        "project_id":      None,
+                        "staff":           name,
+                        "role_id":         sr["role_id"],
+                        "start_date":      None,
+                        "end_date":        None,
+                        "variant_id":      resolved_variant_id,
+                        "project_name":    None,
+                        "project_color":   None,
+                        "task_name":       dt["task_name"],
+                        "task_color":      dt["color_hexcode"],
+                        "is_outdated":     False,
+                        "is_default_task": True,
+                    })
 
         cur.execute("""
             SELECT pl.project_id,
@@ -817,7 +863,7 @@ def project_planning_status(variant_id: Optional[int] = None):
             SELECT p.project_id, p.project_name, p.customer,
                    p.target_hours, p.impl_hours AS plan_impl,
                    p.test_hours   AS plan_test,
-                   p.due_date, p.color_hexcode
+                   p.due_date, p.color_hexcode, p.jira_id
             FROM project p
             WHERE p.planned = TRUE AND p.done = FALSE
             AND p.project_type = 'Project'
@@ -951,6 +997,7 @@ def project_planning_status(variant_id: Optional[int] = None):
             "project_name":    p["project_name"],
             "customer":        p["customer"],
             "color_hexcode":   p["color_hexcode"],
+            "jira_id":         p["jira_id"],
             "target_hours":    p["target_hours"],
             "restaufwand":     restaufwand,
             "due_date":        str(p["due_date"]) if p["due_date"] else None,

@@ -56,10 +56,14 @@ def list_tasks(project_id: Optional[int] = None):
                 WHERE t.project_id = %s ORDER BY t.task_name
             """, (project_id,))
         else:
+            # Tasks ohne Projekt (t.project_id IS NULL) müssen hier ebenfalls
+            # sichtbar sein – sonst verschwinden projektlose Tasks aus der
+            # "Alle"-Ansicht, obwohl sie angelegt werden können.
             cur.execute("""
                 SELECT t.*, p.project_name FROM tasks t
                 LEFT JOIN project p ON p.project_id = t.project_id
-                WHERE p.project_type in ('Operations', 'Internal') 
+                WHERE t.project_id IS NULL
+                   OR p.project_type IN ('Operations', 'Internal')
                 ORDER BY t.task_name
             """)
         rows = cur.fetchall()
@@ -84,7 +88,8 @@ def _validate_project_type(project_id: Optional[int]):
 
 @router.post("/", status_code=201)
 def create_task(data: TaskBase):
-    # Validierung vor dem Insert
+    # Validierung vor dem Insert (bei project_id=None wird nichts geprüft –
+    # Tasks können also ohne Projekt angelegt werden)
     _validate_project_type(data.project_id)
     
     with get_cursor(commit=True) as cur:
@@ -145,4 +150,6 @@ def delete_task(task_id: int, force: bool = False):
                 )
             cur.execute("DELETE FROM planning WHERE task_id = %s", (task_id,))
 
+        # Staff, die diesen Task als Standard-Task hinterlegt haben, werden
+        # durch ON DELETE SET NULL automatisch bereinigt (siehe database.sql).
         cur.execute("DELETE FROM tasks WHERE task_id = %s", (task_id,))

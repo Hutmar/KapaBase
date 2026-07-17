@@ -61,6 +61,7 @@
                 <th>h/Woche</th>
                 <th>h/Tag</th>
                 <th>Bemerkung</th>
+                <th>Standard-Task</th>
                 <th>Aktiv</th>
                 <th>Rollen</th>
                 <th style="width:100px"></th>
@@ -94,6 +95,19 @@
             <label>Bemerkung</label>
             <input id="f-remark" placeholder="Pflicht bei manuellem h/Tag">
         </div>
+        <div class="form-row" style="align-items:flex-start">
+            <label style="padding-top:6px">Standard-Task</label>
+            <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                <select id="f-default-task">
+                    <option value="">– keiner –</option>
+                </select>
+                <div class="text-dim" style="font-size:11px">
+                    Wird in der Planung automatisch angezeigt, solange keine echte
+                    Planung oder Abwesenheit für die jeweilige Woche vorliegt.
+                    Wird NICHT als Planungseintrag gespeichert.
+                </div>
+            </div>
+        </div>
         <div class="form-row">
             <label>Aktiv</label>
             <input id="f-active" type="checkbox" checked style="width:auto">
@@ -123,7 +137,22 @@
 {% block scripts %}
 <script>
     let editingName = null;
+    let allTasksForDropdown = [];
     const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
+    async function loadTaskOptions() {
+        try {
+            const data = await api('GET', '/api/tasks/');
+            allTasksForDropdown = data.tasks || [];
+            const sel = document.getElementById('f-default-task');
+            sel.innerHTML = '<option value="">– keiner –</option>' +
+                allTasksForDropdown.map(t =>
+                    `<option value="${t.task_id}">${t.task_name}${t.project_name ? ' (' + t.project_name + ')' : ''}</option>`
+                ).join('');
+        } catch(e) {
+            console.error('Fehler beim Laden der Tasks:', e);
+        }
+    }
 
     async function loadStaff() {
         const response = await api('GET', '/api/staff/');
@@ -136,6 +165,7 @@
                 <td>${s.hours_per_week}</td>
                 <td>${s.hours_per_day}</td>
                 <td class="text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${s.remark||''}</td>
+                <td class="text-dim" style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${s.default_task_name||'–'}</td>
                 <td><input type="checkbox" ${s.is_active?'checked':''} onchange="toggleActive('${s.shortname}',this.checked)" style="width:auto"></td>
                 <td>${(s.roles||[]).map(r=>roleTag(r)).join(' ')}</td>
                 <td>
@@ -184,12 +214,14 @@
             document.getElementById('f-hpw').value = s.hours_per_week;
             document.getElementById('f-hpd').value = s.hours_per_day;
             document.getElementById('f-remark').value = s.remark||'';
+            document.getElementById('f-default-task').value = s.default_task_id || '';
             document.getElementById('f-active').checked = s.is_active;
             document.getElementById('role-dev').checked  = (s.roles||[]).includes('Developer');
             document.getElementById('role-test').checked = (s.roles||[]).includes('Tester');
             document.getElementById('role-other').checked= (s.roles||[]).includes('Other');
         } else {
             ['f-shortname','f-hpw','f-hpd','f-remark'].forEach(id=>document.getElementById(id).value='');
+            document.getElementById('f-default-task').value = '';
             document.getElementById('f-active').checked = true;
             ['role-dev','role-test','role-other'].forEach(id=>document.getElementById(id).checked=false);
         }
@@ -209,11 +241,13 @@
         if (document.getElementById('role-other').checked)roles.push('Other');
 
         const hpdVal = document.getElementById('f-hpd').value;
+        const defaultTaskVal = document.getElementById('f-default-task').value;
         const payload = {
             shortname:      document.getElementById('f-shortname').value.trim(),
             hours_per_week: parseFloat(document.getElementById('f-hpw').value),
             hours_per_day:  hpdVal ? parseFloat(hpdVal) : null,
             remark:         document.getElementById('f-remark').value.trim()||null,
+            default_task_id: defaultTaskVal ? parseInt(defaultTaskVal) : null,
             is_active:      document.getElementById('f-active').checked,
             roles,
             force_delete_plannings: forceDelete
@@ -258,6 +292,7 @@
         } catch(e) { toast(e.message,'error'); }
     }
 
+    loadTaskOptions();
     loadStaff();
 </script>
 {% endblock %}

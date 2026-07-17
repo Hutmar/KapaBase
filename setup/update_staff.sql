@@ -1,0 +1,1 @@
+ALTER TABLE staff ADD COLUMN default_task_id int REFERENCES tasks(task_id) ON DELETE SET NULL;

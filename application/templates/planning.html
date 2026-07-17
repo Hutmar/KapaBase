@@ -154,6 +154,11 @@ background: repeating-linear-gradient(
 );
 pointer-events: none;
 }
+/* Standard-Task (automatisch, nicht gespeichert) */
+.planning-cell.default-task {
+opacity: 0.62;
+border: 1px dashed rgba(255,255,255,0.35);
+}
 .cell-items-wrap {
 display: flex;
 gap: 2px;
@@ -304,6 +309,14 @@ font-size: 11px;
 font-weight: 600;
 font-family: var(--font-mono);
 }
+.status-jira-link {
+display: inline-flex;
+align-items: center;
+margin-left: 6px;
+vertical-align: middle;
+opacity: 0.85;
+}
+.status-jira-link:hover { opacity: 1; }
 .cell-dropdown {
 position: absolute;
 top: 100%;
@@ -548,6 +561,7 @@ let _dropdownSearchTerm = '';
 let _activeDropdownItemIndex = -1;
 let _allProjectStatusRows = [];
 let _allAvailableWeeksForDropdown = null;
+let jiraBaseUrl = '';
 
 // variant_id aus URL-Parameter lesen (optional)
 const urlParams = new URLSearchParams(window.location.search);
@@ -581,6 +595,28 @@ if (expectedResponseContentType === 'text/xml' || expectedResponseContentType ==
 } else {
   return await response.json();
 }
+}
+
+// ── Jira-Base-URL laden (für Icon-Link im Planungsstatus) ──────────────────────
+async function loadJiraConfig() {
+  try {
+    const cfg = await api('GET', '/api/sync/config/jira_base_url');
+    jiraBaseUrl = cfg.base_url || '';
+  } catch(e) {
+    // Falls kein Endpunkt: stille Ignorierung
+  }
+}
+
+function jiraIconLink(jiraId) {
+  if (!jiraId) return '';
+  const href = jiraBaseUrl ? `${jiraBaseUrl}/browse/${jiraId}` : '#';
+  return `<a href="${href}" target="_blank" rel="noopener" class="status-jira-link" title="Jira: ${esc(jiraId)}" onclick="event.stopPropagation()">
+    <svg width="13" height="13" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
+      <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
+      <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
+    </svg>
+  </a>`;
 }
 
 // ── Daten laden ────────────────────────────────────────────────────────────────
@@ -807,15 +843,16 @@ if (oldCg) oldCg.remove();
 headerTable.insertAdjacentHTML('afterbegin', colgroupHtml);
 document.getElementById('planning-thead').innerHTML = monthRowHtml + kwRowHtml;
 
-const devs  = staff_roles.filter(r => r.role === 'Developer').sort((a,b) => a.shortname.localeCompare(b.shortname));
-const tests = staff_roles.filter(r => r.role === 'Tester').sort((a,b) => a.shortname.localeCompare(b.shortname));
-const ordered = [...devs, ...tests];
+const devs   = staff_roles.filter(r => r.role === 'Developer').sort((a,b) => a.shortname.localeCompare(b.shortname));
+const tests  = staff_roles.filter(r => r.role === 'Tester').sort((a,b) => a.shortname.localeCompare(b.shortname));
+const others = staff_roles.filter(r => r.role === 'Other').sort((a,b) => a.shortname.localeCompare(b.shortname));
+const ordered = [...devs, ...tests, ...others];
 
 let tbody = '';
 ordered.forEach(sr => {
   const name      = sr.shortname;
   const role      = sr.role;
-  const roleColor = role === 'Developer' ? '#4A90D9' : '#9B59B6';
+  const roleColor = role === 'Developer' ? '#4A90D9' : role === 'Tester' ? '#9B59B6' : '#8892aa';
   const capData   = (capacity_by_staff || {})[name] || {};
   const staffPlan = (plannings[name]   || {});
   const staffAbs  = (absence_map[name] || {});
@@ -888,12 +925,16 @@ ordered.forEach(sr => {
         const planId   = pl.planning_id != null ? pl.planning_id : 'null';
         const outdated = pl.is_outdated ? ' outdated' : '';
         const partial  = isPartialWeek ? ' partial-week' : '';
+        const isDefault  = !!pl.is_default_task;
+        const defaultCls = isDefault ? ' default-task' : '';
         const oTitle   = pl.is_outdated ? ' (veraltet \u2013 neuere Buchungen vorhanden)' : '';
         const pTitle   = isPartialWeek ? ` (\u26a0 ${absInfo.absent_days}\u00a0von\u00a0${absInfo.total_days} Tagen abwesend \u2013 Stunden entsprechend reduziert)` : '';
-        return `<div class="planning-cell${outdated}${partial}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}${oTitle}${pTitle}">
+        const dTitle   = isDefault ? ' (Standard-Task \u2013 automatisch, nicht gespeichert)' : '';
+        const removeBtn = isDefault ? '' : `<button class="remove-btn"
+            onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>`;
+        return `<div class="planning-cell${outdated}${partial}${defaultCls}" style="background:${color};color:${txtCol};max-width:${itemMaxWidth}" title="${label}${oTitle}${pTitle}${dTitle}">
           <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
-          <button class="remove-btn"
-            onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>
+          ${removeBtn}
         </div>`;
       }).join('');
 
@@ -1001,6 +1042,18 @@ _dropdownItems = [
 if (!_dropdownItems.length) { toast('Keine Projekte/Tasks verfügbar', 'error'); return; }
 
 _filteredDropdownItems = [..._dropdownItems];
+_dropdownSearchTerm = '';
+
+// Vorauswahl: zuletzt gewählter Eintrag (Projekt oder Task), falls noch vorhanden
+_activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1;
+try {
+  const lastSelected = JSON.parse(localStorage.getItem('planningLastSelectedItem') || 'null');
+  if (lastSelected) {
+    const idx = _filteredDropdownItems.findIndex(it => it.type === lastSelected.type && it.id === lastSelected.id);
+    if (idx !== -1) _activeDropdownItemIndex = idx;
+  }
+} catch(err) { /* ignore */ }
+
 renderDropdownItems(_filteredDropdownItems);
 
 const rect = e.currentTarget.getBoundingClientRect();
@@ -1010,8 +1063,6 @@ dd.style.left = (rect.left   + window.scrollX) + 'px';
 dd.style.position = 'absolute';
 
 document.addEventListener('keydown', handleDropdownKeydown);
-_dropdownSearchTerm = '';
-_activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1;
 highlightActiveDropdownItem();
 }
 
@@ -1089,6 +1140,9 @@ async function dropdownAssign(e, staff, roleId, weekKey, type, id, name, color) 
 e.stopPropagation();
 closeDropdown();
 const payload = { type, id, name, color };
+try {
+  localStorage.setItem('planningLastSelectedItem', JSON.stringify({ type, id }));
+} catch(err) { /* ignore */ }
 await doAssign(staff, roleId, weekKey, payload);
 }
 
@@ -1243,15 +1297,17 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
                  + `Geplant vor aktueller KW: ${Math.round(p.planned_prev_test)}h\n`
                  + `Geplant ab aktueller KW: ${Math.round(p.planned_cur_test)}h`;
 
+  const editIcon = hasEditRights
+    ? `<a href="/projects?edit=${p.project_id}" target="_blank" class="btn btn-ghost btn-xs" title="Projekt bearbeiten" style="margin-left:6px;padding:1px 6px">✎</a>`
+    : '';
+  const jiraLinkHtml = p.jira_id ? jiraIconLink(p.jira_id) : '';
+
 return `<tr style="background:${bgColor}">
     <td>
       <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-      <a href="/projects?edit=${p.project_id}" target="_blank" 
-         style="color: inherit; text-decoration: none;" 
-         onmouseover="this.style.textDecoration='underline'" 
-         onmouseout="this.style.textDecoration='none'">
-        <strong>${esc(p.project_name)}</strong>
-      </a>
+      <strong>${esc(p.project_name)}</strong>
+      ${editIcon}
+      ${jiraLinkHtml}
     </td>
     <td class="text-dim">${esc(p.customer)}</td>
     <td class="text-mono">${Math.round(p.target_hours)}h</td>
@@ -1408,6 +1464,7 @@ function initDragScroll(wrapperId, scrollTargetId) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+loadJiraConfig();
 loadPlanning();
 </script>
 {% endblock %}

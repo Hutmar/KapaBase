@@ -1,32 +1,5 @@
 -- psql -h localhost -u planning -d planning
 
-CREATE TABLE staff (
-	shortname varchar(100) not null primary key,
-	hours_per_week numeric(5,2) not null,
-	hours_per_day numeric(5,2) not null,
-	remark varchar(500),
-	is_active boolean default true
-);
-
-CREATE TYPE roleType AS ENUM ('Developer', 'Tester', 'Other');
-
-CREATE TABLE roles (
-	role_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
-	role roleType not null
-);
-
-CREATE TYPE absenceType AS ENUM ('Urlaub', 'Krank', 'GLAZ', 'Other', 'Teamday');
-
-CREATE TABLE absence (
-	absence_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
-	absence_from date not null,
-	absence_to date not null,
-	absence_type absenceType not null
-);
-
-
 CREATE TYPE projectType AS ENUM ('Project', 'Operations', 'Internal');
 
 create table project (
@@ -54,6 +27,33 @@ create table tasks (
 	task_name varchar(200) NOT NULL,
 	color_hexcode char(7) default null,
 	unique(color_hexcode)
+);
+
+CREATE TABLE staff (
+	shortname varchar(100) not null primary key,
+	hours_per_week numeric(5,2) not null,
+	hours_per_day numeric(5,2) not null,
+	remark varchar(500),
+	default_task_id int REFERENCES tasks(task_id) ON DELETE SET NULL;
+	is_active boolean default true
+);
+
+CREATE TYPE roleType AS ENUM ('Developer', 'Tester', 'Other');
+
+CREATE TABLE roles (
+	role_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
+	role roleType not null
+);
+
+CREATE TYPE absenceType AS ENUM ('Urlaub', 'Krank', 'GLAZ', 'Other', 'Teamday');
+
+CREATE TABLE absence (
+	absence_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	shortname varchar(100) not null REFERENCES staff(shortname) ON UPDATE CASCADE ON DELETE RESTRICT,
+	absence_from date not null,
+	absence_to date not null,
+	absence_type absenceType not null
 );
 
 create table worked_hours (
