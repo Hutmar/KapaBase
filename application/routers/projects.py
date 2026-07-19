@@ -10,7 +10,8 @@ from datetime import date
 from enum import Enum
 from psycopg2 import IntegrityError
 from db import get_cursor
-from capacity import calculate_total_capacity  
+from capacity import calculate_total_capacity
+from routers.config import get_current_release_range
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -120,8 +121,21 @@ def list_projects(
     planned: Optional[bool] = None,
     done: Optional[bool] = None,
     search: Optional[str] = None,
+    release_only: bool = False,
 ):
-    """Alle Projekte mit optionalen Filtern und Summen."""
+    """
+    Alle Projekte mit optionalen Filtern und Summen.
+
+    release_only=True: Nur Projekte, deren Liefertermin (due_date) in den
+    Zeitraum der aktuellen Release fällt (siehe config.json / routers/config.py).
+    Die Metriken (Summe Soll-Stunden, verfügbare Kapazität, Differenz)
+    werden dann ebenfalls nur auf Basis dieser eingeschränkten Menge berechnet.
+    """
+    release_start: Optional[date] = None
+    release_end:   Optional[date] = None
+    if release_only:
+        release_start, release_end = get_current_release_range()
+
     with get_cursor() as cur:
         conditions = []
         params: list = []  
@@ -136,7 +150,11 @@ def list_projects(
                 "(project_name ILIKE %s OR customer ILIKE %s OR jira_id ILIKE %s)"
             )
             like = f"%{search}%"
-            params.extend([like, like, like])  
+            params.extend([like, like, like])
+        if release_only:
+            conditions.append("due_date >= %s AND due_date <= %s")
+            params.extend([release_start, release_end])
+
         where = "WHERE " + " AND ".join(conditions) if conditions else ""
         cur.execute(f"""
             SELECT * FROM project
@@ -146,20 +164,31 @@ def list_projects(
         projects = cur.fetchall()
 
         # Summe target_hours für geplante, nicht erledigte Projekte
-        cur.execute("""
+        # (bei release_only zusätzlich auf den Release-Zeitraum eingeschränkt)
+        sum_conditions = ["planned = TRUE", "done = FALSE"]
+        sum_params: list = []
+        if release_only:
+            sum_conditions.append("due_date >= %s AND due_date <= %s")
+            sum_params.extend([release_start, release_end])
+        cur.execute(f"""
             SELECT COALESCE(SUM(target_hours), 0) AS sum_target
             FROM project
-            WHERE planned = TRUE AND done = FALSE
-        """)
+            WHERE {" AND ".join(sum_conditions)}
+        """, sum_params)
         sum_target = cur.fetchone()["sum_target"]
 
         # Zeitbereich für Kapazitätsberechnung ermitteln
-        cur.execute("""
+        range_conditions = ["planned = TRUE", "done = FALSE",
+                             "start_date IS NOT NULL", "due_date IS NOT NULL"]
+        range_params: list = []
+        if release_only:
+            range_conditions.append("due_date >= %s AND due_date <= %s")
+            range_params.extend([release_start, release_end])
+        cur.execute(f"""
             SELECT MIN(start_date) AS min_start, MAX(due_date) AS max_due
             FROM project
-            WHERE planned = TRUE AND done = FALSE
-            AND start_date IS NOT NULL AND due_date IS NOT NULL
-        """)
+            WHERE {" AND ".join(range_conditions)}
+        """, range_params)
         range_row = cur.fetchone()
 
         # Kapazität berechnen
@@ -188,6 +217,10 @@ def list_projects(
             "sum_target_hours": sum_target,
             "capacity": cap_info,
             "suggested_color": _next_free_color(),
+            "release_range": (
+                {"start": str(release_start), "end": str(release_end)}
+                if release_only else None
+            ),
         }  
 
 @router.get("/suggest_color")

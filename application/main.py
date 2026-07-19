@@ -16,6 +16,7 @@ from routers import sync as sync_router
 from routers import planning_variants
 from routers import sync_config
 from routers import notifications
+from routers import config
 from acl import has_permission
 from scheduler import start_scheduler, stop_scheduler
 
@@ -55,7 +56,7 @@ app.include_router(sync_router.router,       prefix="/api/sync",              ta
 app.include_router(planning_variants.router, prefix="/api/planning_variants", tags=["Planning Variants"])
 app.include_router(sync_config.router,         prefix="/api/sync/config",         tags=["Sync Config"])
 app.include_router(notifications.router, prefix="/api/notifications",      tags=["Notifications"])
-
+app.include_router(config.router,     prefix="/api/config",           tags=["Config"])
 
 # ── Frontend HTML Seiten ───────────────────────────────────────────────────────
 

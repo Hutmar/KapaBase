@@ -13,6 +13,15 @@
         {% endif %}
     </div>
 
+    <!-- ── Seitenweiter Filter: Aktuelles Wirtschaftsjahr ──────────────────── -->
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+        <label class="flex-gap" style="color:var(--text2)">
+            <input type="checkbox" id="f-fiscal-year-only" checked style="width:auto" onchange="filterFiscalYearChanged()">
+            Aktuelles WJ
+        </label>
+        <span id="fiscal-year-range-label" class="text-dim" style="font-size:11px"></span>
+    </div>
+
     <div style="margin-bottom: 24px;">
         <h2>
             Abwesenheitsübersicht
@@ -143,9 +152,14 @@
 <script>
 let editingId = null;
 const STAFF_FILTER_KEY = 'absenceStaffFilter';
+const FISCAL_YEAR_FILTER_KEY = 'absenceFiscalYearOnly';
 const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed';
 const TEAMDAYS_COLLAPSED_KEY = 'absenceTeamdaysCollapsed';
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
+// Zeitraum des aktuellen Wirtschaftsjahres (für die Tage-Klippung in der Anzeige)
+let fiscalYearStart = null;
+let fiscalYearEnd   = null;
 
 async function init() {
     const staffResponse = await api('GET', '/api/staff/');
@@ -165,6 +179,15 @@ async function init() {
     } else {
         sel.value = '';
     }
+
+    // "Aktuelles WJ"-Checkbox: gespeicherten Zustand laden (Default: checked)
+    const savedFiscalYearOnly = localStorage.getItem(FISCAL_YEAR_FILTER_KEY);
+    if (savedFiscalYearOnly !== null) {
+        document.getElementById('f-fiscal-year-only').checked = (savedFiscalYearOnly === 'true');
+    }
+
+    // WJ-Zeitraum MUSS geladen sein, bevor die Tage-Spalte berechnet wird
+    await loadFiscalYearRange();
 
     loadAbsences();
     loadAbsenceSummary();
@@ -201,6 +224,27 @@ async function init() {
     });
 }
 
+// ── Wirtschaftsjahr-Zeitraum laden und anzeigen ─────────────────────────────────
+async function loadFiscalYearRange() {
+    try {
+        const range = await api('GET', '/api/config/fiscal_year/current');
+        fiscalYearStart = range.start_date;
+        fiscalYearEnd   = range.end_date;
+        const label = document.getElementById('fiscal-year-range-label');
+        if (label) label.textContent = `(${range.start_date} – ${range.end_date})`;
+    } catch(e) {
+        // Falls kein Endpunkt verfügbar: stille Ignorierung
+    }
+}
+
+// Checkbox betrifft die GESAMTE Seite: Übersicht UND Detailliste neu laden
+function filterFiscalYearChanged() {
+    const checked = document.getElementById('f-fiscal-year-only').checked;
+    localStorage.setItem(FISCAL_YEAR_FILTER_KEY, checked);
+    loadAbsences();
+    loadAbsenceSummary();
+}
+
 function filterStaffChanged() {
     const selectedStaff = document.getElementById('filter-staff').value;
     localStorage.setItem(STAFF_FILTER_KEY, selectedStaff);
@@ -231,6 +275,20 @@ function calcDaysInclusive(fromStr, toStr) {
     if (isNaN(from.getTime()) || isNaN(to.getTime())) return 0;
     const diffMs = to.getTime() - from.getTime();
     return Math.round(diffMs / 86400000) + 1;
+}
+
+// Tage-Anzahl für die "Tage"-Spalte der Detailliste: bei aktivem WJ-Filter
+// wird der Zeitraum auf den aktuellen WJ-Bereich geklippt, d.h. bei
+// Abwesenheiten, die über den WJ-Wechsel hinausgehen, werden nur die Tage
+// gezählt, die tatsächlich im aktuellen WJ liegen. "Von"/"Bis" in den
+// jeweiligen Spalten bleiben davon unberührt (zeigen das reale Datum).
+function calcDisplayDays(fromStr, toStr, fiscalYearOnly) {
+    if (!fiscalYearOnly || !fiscalYearStart || !fiscalYearEnd) {
+        return calcDaysInclusive(fromStr, toStr);
+    }
+    const clippedFrom = fromStr < fiscalYearStart ? fiscalYearStart : fromStr;
+    const clippedTo   = toStr   > fiscalYearEnd   ? fiscalYearEnd   : toStr;
+    return calcDaysInclusive(clippedFrom, clippedTo);
 }
 
 function toggleSummaryTable() {
@@ -264,7 +322,11 @@ function toggleTeamdaysTable() {
 }
 
 async function loadAbsenceSummary() {
-    const url = `/api/absence/summary`;
+    const fiscalYearOnly = document.getElementById('f-fiscal-year-only').checked;
+    const params = new URLSearchParams();
+    if (fiscalYearOnly) params.append('fiscal_year_only', 'true');
+
+    const url = `/api/absence/summary?${params.toString()}`;
     const summary = await api('GET', url);
     const tbody = document.getElementById('absence-summary-body');
     const tfoot = document.getElementById('absence-summary-footer');
@@ -277,7 +339,7 @@ async function loadAbsenceSummary() {
     let overallMaxAbsenceDate = null;
 
     if (summary.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden${fiscalYearOnly ? ' im aktuellen Wirtschaftsjahr' : ''}.</td></tr>`;
     } else {
         summary.forEach(s => {
             tbody.innerHTML += `
@@ -368,21 +430,33 @@ function absenceTypeBadge(type) {
 
 async function loadAbsences() {
     const staff = document.getElementById('filter-staff').value;
-    const url = staff ? `/api/absence/?shortname=${staff}` : '/api/absence/';
-    const rows = staff ? await api('GET', url) : [];
+    const fiscalYearOnly = document.getElementById('f-fiscal-year-only').checked;
 
     const absenceBody = document.getElementById('absence-body');
     const footer = document.getElementById('absence-days-footer');
     absenceBody.innerHTML = '';
     footer.innerHTML = '';
 
+    if (!staff) {
+        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.</td></tr>`;
+        return;
+    }
+
+    const params = new URLSearchParams();
+    params.append('shortname', staff);
+    if (fiscalYearOnly) params.append('fiscal_year_only', 'true');
+
+    const rows = await api('GET', `/api/absence/?${params.toString()}`);
+
     if (rows.length === 0) {
-        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">${staff ? 'Keine Abwesenheiten für diesen Mitarbeiter.' : 'Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.'}</td></tr>`;
+        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">Keine Abwesenheiten für diesen Mitarbeiter${fiscalYearOnly ? ' im aktuellen Wirtschaftsjahr' : ''}.</td></tr>`;
     } else {
         let totalDays = 0;
         absenceBody.innerHTML = rows.map(a => {
             const isTeamday = a.absence_type === 'Teamday';
-            const days = calcDaysInclusive(a.absence_from, a.absence_to);
+            // "Tage"-Spalte: bei aktivem WJ-Filter auf den WJ-Anteil geklippt.
+            // Von/Bis zeigen weiterhin das reale (nicht geklippte) Datum.
+            const days = calcDisplayDays(a.absence_from, a.absence_to, fiscalYearOnly);
             totalDays += days;
             return `
             <tr>

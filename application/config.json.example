@@ -1,0 +1,12 @@
+{
+  "release": {
+    "start_month": 5,
+    "start_day": 1,
+    "end_month": 3,
+    "end_day": 31
+  },
+  "fiscal_year": {
+    "start_month": 7,
+    "start_day": 1
+  }
+}

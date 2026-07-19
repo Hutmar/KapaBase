@@ -24,6 +24,11 @@
 <input id="search" placeholder="🔍 Suche (Name, Kunde, Jira)" style="max-width:240px"
 oninput="saveFilterState(); loadProjects()">
 <label class="flex-gap" style="color:var(--text2)">
+<input type="checkbox" id="f-release-only" checked style="width:auto" onchange="saveFilterState(); loadProjects()">
+Aktuelle Release
+</label>
+<span id="release-range-label" class="text-dim" style="font-size:11px"></span>
+<label class="flex-gap" style="color:var(--text2)">
 <input type="checkbox" id="f-planned" style="width:auto" onchange="saveFilterState(); loadProjects()">
 Nur geplante
 </label>
@@ -47,7 +52,6 @@ Details anzeigen
 <th onclick="setAndSort('project_name')">Name ⇅</th>
 <th onclick="setAndSort('project_type')">Typ ⇅</th>
 <th onclick="setAndSort('customer')">Kunde ⇅</th>
-<th class="detail-col">Jira</th>
 <th onclick="setAndSort('target_hours')">Soll-h ⇅</th>
 <th class="detail-col">Impl-h</th>
 <th class="detail-col">Test-h</th>
@@ -120,7 +124,15 @@ style="max-width:100%;border-radius:4px;background:#fff">
 <div class="form-row">
 <label>Geplant</label>
 <div style="display:flex;flex-direction:column;gap:2px">
-  <input id="f-planned" type="checkbox" style="width:auto" checked>
+  <!--
+    WICHTIG: eigene, eindeutige ID "f-modal-planned" statt "f-planned".
+    Die Filter-Checkbox "Nur geplante" oben im Suchbereich verwendet
+    ebenfalls id="f-planned" – bei doppelt vergebener ID liefert
+    document.getElementById('f-planned') IMMER das erste DOM-Element
+    (die Filter-Checkbox) zurück, wodurch diese Modal-Checkbox von JS
+    nie tatsächlich gelesen/gesetzt wurde (Bugfix).
+  -->
+  <input id="f-modal-planned" type="checkbox" style="width:auto" checked>
   <span id="f-planned-hint" class="text-dim" style="font-size:11px;display:none">
     Erst nach Eingabe von Soll-Stunden aktivierbar
   </span>
@@ -279,6 +291,17 @@ style="max-width:100%;border-radius:4px;background:#fff">
     text-decoration: underline; /* Zeigt eine Unterstreichung nur beim Hovern an */
 }
 
+/* Jira-Icon-Link neben dem Projektnamen (analog Gantt-Ansicht) */
+.proj-jira-link {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    vertical-align: middle;
+    opacity: 0.85;
+    flex-shrink: 0;
+}
+.proj-jira-link:hover { opacity: 1; }
+
 /* Kalenderwochen-Eingabefeld: rote Umrandung bei ungültigem Format */
 .input-error { border-color: var(--danger) !important; }
 </style>
@@ -298,6 +321,15 @@ const SYNC_ROUTER  = 'projects';
 const SYNC_SOURCE  = 'jira_projects';
 let currentSyncPreview = null;
 
+function esc(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 // Jira-Base-URL laden
 async function loadJiraConfig() {
     try {
@@ -308,13 +340,18 @@ async function loadJiraConfig() {
     }
 }
 
-function jiraLink(jiraId) {
+// Jira-Icon-Link (analog gantt.html) – wird neben dem Projektnamen angezeigt,
+// ersetzt die frühere eigene "Jira"-Spalte.
+function jiraIconLink(jiraId) {
     if (!jiraId) return '';
-    if (jiraBaseUrl) {
-        return `<a href="${jiraBaseUrl}/browse/${jiraId}" target="_blank" rel="noopener"
-            style="color:var(--accent);font-family:var(--font-mono);font-size:12px">${jiraId}</a>`;
-    }
-    return `<span class="text-mono" style="font-size:12px">${jiraId}</span>`;
+    const href = jiraBaseUrl ? `${jiraBaseUrl}/browse/${jiraId}` : '#';
+    return `<a href="${href}" target="_blank" rel="noopener" class="proj-jira-link" title="Jira: ${esc(jiraId)}" onclick="event.stopPropagation()">
+        <svg width="13" height="13" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M15.975 0C7.155 0 0 7.155 0 15.975S7.155 31.95 15.975 31.95 31.95 24.795 31.95 15.975 24.795 0 15.975 0z" fill="#2684FF"/>
+            <path d="M24.27 8.505H17.49l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515z" fill="white"/>
+            <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
+        </svg>
+    </a>`;
 }
 
 document.getElementById('f-color')?.addEventListener('input', function() {
@@ -359,12 +396,21 @@ function validateHours() {
 }
 
 // "Geplant" kann erst aktiviert werden, wenn Soll-Stunden > 0 sind.
-function updatePlannedAvailability() {
+//
+// forceUncheck steuert, ob eine bereits gesetzte Checked-Auswahl beim
+// Zurückfallen auf 0 Stunden aktiv zurückgesetzt wird:
+// - true  (Standard, z.B. beim Tippen im Soll-Stunden-Feld): der Nutzer
+//   ändert aktiv die Stunden, daher wird bei 0 auch wirklich abgehakt.
+// - false (beim Öffnen des Modals): hier darf ein zuvor gesetztes
+//   checked=true (Default bei "Neues Projekt") NICHT sofort wieder
+//   überschrieben werden – sonst geht der Default-Wert beim Öffnen
+//   des Dialogs verloren und wird beim Speichern nicht übernommen.
+function updatePlannedAvailability(forceUncheck = true) {
   const t = parseInt(document.getElementById('f-target').value || 0);
-  const plannedCb = document.getElementById('f-planned');
+  const plannedCb = document.getElementById('f-modal-planned');
   const hint = document.getElementById('f-planned-hint');
   if (t === 0) {
-    plannedCb.checked = false;
+    if (forceUncheck) plannedCb.checked = false;
     plannedCb.disabled = true;
     hint.style.display = 'block';
   } else {
@@ -381,13 +427,6 @@ function toggleDetails() {
 }
 
 // ── Datum ↔ Kalenderwoche (Modal) ───────────────────────────────────────────────
-// Die KW-Eingabe enthält bewusst KEIN Jahr, z.B. "3" oder "W03".
-// Bei Eingabe wird automatisch die nächstgelegene ZUKÜNFTIGE Kalenderwoche
-// mit dieser Nummer ermittelt (aktuelles Jahr, falls diese KW noch nicht
-// vorbei ist – sonst automatisch das Folgejahr).
-
-// Reine Wochennummer (ohne Jahr) aus einem Datum ableiten – für die Anzeige
-// im KW-Feld, nachdem im Datumsfeld ein Datum gewählt wurde.
 function isoWeekNumberOf(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
@@ -406,7 +445,6 @@ function mondayOfIsoWeek(year, week) {
   return new Date(kw1mon.getTime() + (week - 1) * 7 * 86400000);
 }
 
-// Erlaubt reine Zahl ("3", "03") oder mit "W"/"KW"-Präfix ("W03", "KW3").
 function parseWeekNumber(s) {
   const m = /^\s*(?:kw|w)?\s*0*(\d{1,2})\s*$/i.exec(s || '');
   if (!m) return null;
@@ -415,10 +453,6 @@ function parseWeekNumber(s) {
   return week;
 }
 
-// Ermittelt zu einer reinen Wochennummer den Montag der nächstgelegenen
-// ZUKÜNFTIGEN Vorkommnis dieser KW (heutiges Datum eingeschlossen).
-// Prüft dazu Kandidaten im aktuellen und im folgenden Jahr und wählt den
-// frühesten Termin, der nicht in der Vergangenheit liegt.
 function nearestFutureMondayForWeek(week) {
   const today    = new Date();
   const todayUTC = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
@@ -431,13 +465,11 @@ function nearestFutureMondayForWeek(week) {
     }
   });
   if (!best) {
-    // Fallback (sollte praktisch nie eintreten)
     best = mondayOfIsoWeek(today.getFullYear() + 1, week);
   }
   return best;
 }
 
-// Datum geändert -> KW-Feld (nur Wochennummer) aktualisieren
 function onDateInput(dateInputId, kwInputId) {
   const dateVal = document.getElementById(dateInputId).value;
   const kwInput = document.getElementById(kwInputId);
@@ -445,8 +477,6 @@ function onDateInput(dateInputId, kwInputId) {
   kwInput.classList.remove('input-error');
 }
 
-// KW-Feld geändert -> Datum auf Montag der nächstgelegenen zukünftigen
-// Vorkommnis dieser Kalenderwoche setzen (nach Validierung)
 function onKwInput(kwInputId, dateInputId) {
   const kwInput = document.getElementById(kwInputId);
   const val = kwInput.value;
@@ -466,6 +496,7 @@ function onKwInput(kwInputId, dateInputId) {
 
 function saveFilterState() {
   localStorage.setItem('project_search_term', document.getElementById('search').value.trim());
+  localStorage.setItem('project_filter_release_only', document.getElementById('f-release-only').checked);
   localStorage.setItem('project_filter_planned', document.getElementById('f-planned').checked);
   localStorage.setItem('project_filter_done', document.getElementById('f-done').checked);
   localStorage.setItem('project_show_details', document.getElementById('show-details').checked);
@@ -473,10 +504,12 @@ function saveFilterState() {
 
 function loadFilterState() {
   const searchTerm  = localStorage.getItem('project_search_term');
+  const filterReleaseOnly = localStorage.getItem('project_filter_release_only');
   const filterPlanned = localStorage.getItem('project_filter_planned');
   const filterDone  = localStorage.getItem('project_filter_done');
   const showDetails = localStorage.getItem('project_show_details');
   if (searchTerm  !== null) document.getElementById('search').value = searchTerm;
+  if (filterReleaseOnly !== null) document.getElementById('f-release-only').checked = (filterReleaseOnly === 'true');
   if (filterPlanned !== null) document.getElementById('f-planned').checked = (filterPlanned === 'true');
   if (filterDone  !== null) document.getElementById('f-done').checked = (filterDone === 'true');
   if (showDetails !== null) document.getElementById('show-details').checked = (showDetails === 'true');
@@ -485,10 +518,12 @@ function loadFilterState() {
 async function loadProjects() {
   loadFilterState();
   const search   = document.getElementById('search').value.trim();
+  const releaseOnly = document.getElementById('f-release-only').checked;
   const planned  = document.getElementById('f-planned').checked;
   const showDone = document.getElementById('f-done').checked;
 
   const params = new URLSearchParams();
+  if (releaseOnly) params.append('release_only', 'true');
   if (planned)   params.append('planned', 'true');
   if (!showDone) params.append('done', 'false');
   if (search)    params.append('search', search);
@@ -499,8 +534,19 @@ async function loadProjects() {
     allProjects = data.projects;
     applySortingAndRender();
     renderCapSummary(data);
+    updateReleaseRangeLabel(data.release_range);
   } catch (e) {
     console.error("Fehler beim Laden der Projekte:", e);
+  }
+}
+
+function updateReleaseRangeLabel(releaseRange) {
+  const label = document.getElementById('release-range-label');
+  if (!label) return;
+  if (releaseRange) {
+    label.textContent = `(${releaseRange.start} – ${releaseRange.end})`;
+  } else {
+    label.textContent = '';
   }
 }
 
@@ -544,10 +590,10 @@ function renderProjects(projects) {
         `<a href="/planning_status?project_ids=${p.project_id}" class="project-name-link" target="_blank" rel="noopener noreferrer"><strong>${p.project_name}</strong></a>`
         : `<strong>${p.project_name}</strong>`
     }
+    ${jiraIconLink(p.jira_id)}
   </td>
   <td><span class="badge" style="font-size:11px;padding:2px 6px;background:var(--background2);border-radius:4px">${p.project_type}</span></td>
   <td>${p.customer}</td>
-  <td class="detail-col">${jiraLink(p.jira_id)}</td>
   <td class="text-mono">${p.target_hours}</td>
   <td class="detail-col text-mono">${p.impl_hours}</td>
   <td class="detail-col text-mono">${p.test_hours}</td>
@@ -615,7 +661,10 @@ async function openModal(id=null) {
   document.getElementById('modal-alert').innerHTML = '';
   document.getElementById('modal-title').textContent = id ? 'Projekt bearbeiten' : 'Neues Projekt';
   if (id) {
-    const p = allProjects.find(x => x.project_id === id) || await api('GET', `/api/projects/${id}`);
+    // Immer FRISCH vom Server laden (nicht aus allProjects-Cache), damit der
+    // Bearbeiten-Dialog garantiert den aktuellen DB-Stand zeigt, auch wenn
+    // die lokale Liste z.B. durch einen aktiven Filter veraltet/unvollständig ist.
+    const p = await api('GET', `/api/projects/${id}`);
     document.getElementById('f-name').value     = p.project_name;
     document.getElementById('f-type').value     = p.project_type;
     document.getElementById('f-customer').value = p.customer;
@@ -623,7 +672,7 @@ async function openModal(id=null) {
     document.getElementById('f-target').value   = p.target_hours;
     document.getElementById('f-impl').value     = p.impl_hours;
     document.getElementById('f-test').value     = p.test_hours;
-    document.getElementById('f-planned').checked= p.planned;
+    document.getElementById('f-modal-planned').checked = p.planned;
     document.getElementById('f-done').checked   = p.done;
     document.getElementById('f-start').value    = p.start_date||'';
     document.getElementById('f-due').value      = p.due_date||'';
@@ -636,7 +685,7 @@ async function openModal(id=null) {
     ['f-name','f-customer','f-jira','f-target','f-impl','f-test','f-start','f-due','f-start-kw','f-due-kw','f-remarks']
       .forEach(id=>document.getElementById(id).value='');
     document.getElementById('f-type').value      = 'Project';
-    document.getElementById('f-planned').checked = true;
+    document.getElementById('f-modal-planned').checked = true;
     document.getElementById('f-done').checked    = false;
     document.getElementById('f-color').value     = suggestedColor;
     document.getElementById('f-color-hex').textContent = suggestedColor.toUpperCase();
@@ -645,7 +694,10 @@ async function openModal(id=null) {
   document.getElementById('f-due-kw').value   = isoWeekNumberOf(document.getElementById('f-due').value);
   document.getElementById('f-start-kw').classList.remove('input-error');
   document.getElementById('f-due-kw').classList.remove('input-error');
-  updatePlannedAvailability();
+  // forceUncheck=false: das gerade gesetzte checked (true bei Neuanlage,
+  // bzw. p.planned bei Bearbeitung) darf hier NICHT durch die
+  // "0 Soll-Stunden -> abhaken"-Logik überschrieben werden.
+  updatePlannedAvailability(false);
   document.getElementById('modal-backdrop').classList.add('open');
 }
 
@@ -668,7 +720,7 @@ async function saveProject() {
     target_hours: parseInt(document.getElementById('f-target').value),
     impl_hours:   parseInt(document.getElementById('f-impl').value),
     test_hours:   parseInt(document.getElementById('f-test').value),
-    planned:      document.getElementById('f-planned').checked,
+    planned:      document.getElementById('f-modal-planned').checked,
     done:         document.getElementById('f-done').checked,
     start_date:   document.getElementById('f-start').value||null,
     due_date:     document.getElementById('f-due').value||null,
@@ -819,7 +871,6 @@ function renderSyncPreview(data) {
     createsEl.innerHTML = creates.map((d, i) => renderCreateCard(d, i)).join('');
   }
 
-  // Standard: alle nicht-ignorierten Einträge sind zur Übernahme ausgewählt.
   document.querySelectorAll('.sync-checkbox').forEach(cb => { cb.checked = !cb.disabled; });
 
   const selAllUpd = document.getElementById('select-all-updates');
@@ -911,8 +962,6 @@ function switchSyncTab(tab) {
   document.getElementById('sync-tab-creates').style.display = tab === 'creates' ? '' : 'none';
 }
 
-// "Alle auswählen"-Checkbox pro Tab: schaltet alle (nicht ignorierten)
-// Übernahme-Checkboxen dieses Typs gleichzeitig um.
 function toggleSelectAll(type, checked) {
   document.querySelectorAll(`.sync-checkbox[data-diff-type="${type}"]`).forEach(cb => {
     if (!cb.disabled) cb.checked = checked;
@@ -920,9 +969,6 @@ function toggleSelectAll(type, checked) {
   updateSyncSelectionInfo();
 }
 
-// Markiert/entmarkiert ein Projekt dauerhaft als "nie synchronisieren".
-// Wirkt sofort (persistiert serverseitig) und deaktiviert die
-// Übernahme-Checkbox dieser Karte.
 async function toggleIgnore(checkboxEl, type, idx, externalId) {
   const checked = checkboxEl.checked;
   const card = checkboxEl.closest('.sync-diff-card');
@@ -946,7 +992,7 @@ async function toggleIgnore(checkboxEl, type, idx, externalId) {
     updateSyncSelectionInfo();
     toast(checked ? 'Projekt wird künftig nicht mehr synchronisiert' : 'Projekt wird wieder synchronisiert');
   } catch(e) {
-    checkboxEl.checked = !checked; // UI zurücksetzen bei Fehler
+    checkboxEl.checked = !checked;
     toast(e.message, 'error');
   }
 }
@@ -994,11 +1040,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const editId = urlParams.get('edit');
   
   if (hasEditRights && editId) {
-    // Da loadProjects() asynchron läuft, warten wir kurz, bis die Projekte 
-    // im 'allProjects'-Array geladen sind, bevor wir das Modal öffnen.
     setTimeout(() => {
       openModal(parseInt(editId));
-    }, 200); // 200ms reichen meistens völlig aus
+    }, 200);
   }
 });
 </script>

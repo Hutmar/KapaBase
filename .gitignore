@@ -6,3 +6,4 @@ __pycache__/
 *.local
 sync.json
 sync_ignore.json
+config.json

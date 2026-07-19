@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any
 from datetime import date, timedelta
 from db import get_cursor
 from routers.planning import _effective_hours_in_date_range, _build_at_hols
+from routers.config import get_current_fiscal_year_range
 
 router = APIRouter()
 
@@ -119,29 +120,77 @@ def _delete_plannings_reduced_to_zero(cur, shortname: str,
 
 # ── Endpunkte ──────────────────────────────────────────────────────────────────
 @router.get("/")
-def list_absences(shortname: Optional[str] = None):
-    """Alle Abwesenheiten, optional gefiltert nach Mitarbeiter."""
+def list_absences(shortname: Optional[str] = None, fiscal_year_only: bool = False):
+    """
+    Alle Abwesenheiten, optional gefiltert nach Mitarbeiter.
+
+    fiscal_year_only=True: Nur Abwesenheiten, die sich mit dem Zeitraum des
+    aktuellen Wirtschaftsjahres überschneiden (siehe config.json / Gruppe
+    "fiscal_year" und routers/config.py). Von-/Bis-Datum werden dabei
+    UNVERÄNDERT (nicht geklippt) zurückgegeben – die Einschränkung auf den
+    WJ-Anteil erfolgt nur bei der Tage-Berechnung im Frontend.
+    """
+    fy_start: Optional[date] = None
+    fy_end:   Optional[date] = None
+    if fiscal_year_only:
+        fy_start, fy_end = get_current_fiscal_year_range()
+
     with get_cursor() as cur:
+        conditions = []
+        params: list = []
+
         if shortname:
-            cur.execute("""
-                SELECT * FROM absence
-                WHERE shortname = %s
-                ORDER BY absence_from DESC
-            """, (shortname,))
-        else:
-            cur.execute("""
-                SELECT * FROM absence
-                ORDER BY shortname, absence_from DESC
-            """)
+            conditions.append("shortname = %s")
+            params.append(shortname)
+
+        if fiscal_year_only:
+            conditions.append("absence_from <= %s AND absence_to >= %s")
+            params.extend([fy_end, fy_start])
+
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        cur.execute(f"""
+            SELECT * FROM absence
+            {where}
+            ORDER BY shortname, absence_from DESC
+        """, params)
         return cur.fetchall()
 
 @router.get("/summary", response_model=List[Dict[str, Any]])
-def get_absence_summary(shortname: Optional[str] = None):
+def get_absence_summary(shortname: Optional[str] = None, fiscal_year_only: bool = False):
     """
     Gibt eine Übersicht über Abwesenheitstage pro Mitarbeiter zurück.
     Umfasst Urlaubstage, gesamte Abwesenheitstage sowie erste und letzte Abwesenheit.
+
+    fiscal_year_only=True: Es werden nur Abwesenheiten berücksichtigt, die sich
+    mit dem aktuellen Wirtschaftsjahr überschneiden (siehe config.json / Gruppe
+    "fiscal_year"). Bei der Aggregation (Urlaubstage, Gesamte Abwesenheitstage,
+    Erste/Letzte Abwesenheit) wird der Zeitraum jeder Abwesenheit dabei auf
+    das Wirtschaftsjahr geklippt (GREATEST/LEAST), sodass Tage außerhalb des
+    WJ nicht mitgezählt werden.
     """
     with get_cursor() as cur:
+        if fiscal_year_only:
+            fy_start, fy_end = get_current_fiscal_year_range()
+            query = """
+                SELECT
+                    shortname,
+                    SUM(CASE WHEN absence_type = 'Urlaub'
+                        THEN (LEAST(absence_to, %(fy_end)s::date) - GREATEST(absence_from, %(fy_start)s::date) + 1)
+                        ELSE 0 END) AS vacation_days,
+                    SUM(LEAST(absence_to, %(fy_end)s::date) - GREATEST(absence_from, %(fy_start)s::date) + 1) AS total_absence_days,
+                    MIN(GREATEST(absence_from, %(fy_start)s::date)) AS first_absence,
+                    MAX(LEAST(absence_to, %(fy_end)s::date)) AS last_absence
+                FROM absence
+                WHERE absence_from <= %(fy_end)s AND absence_to >= %(fy_start)s
+            """
+            params: dict = {"fy_start": fy_start, "fy_end": fy_end}
+            if shortname:
+                query += " AND shortname = %(shortname)s"
+                params["shortname"] = shortname
+            query += " GROUP BY shortname ORDER BY shortname"
+            cur.execute(query, params)
+            return cur.fetchall()
+
         query = """
             SELECT
                 shortname,
@@ -152,14 +201,14 @@ def get_absence_summary(shortname: Optional[str] = None):
             FROM
                 absence
         """
-        params = []
+        params_list = []
         if shortname:
             query += " WHERE shortname = %s"
-            params.append(shortname)
-        
+            params_list.append(shortname)
+
         query += " GROUP BY shortname ORDER BY shortname"
 
-        cur.execute(query, params)
+        cur.execute(query, params_list)
         return cur.fetchall()
 
 # ── Teamtage ───────────────────────────────────────────────────────────────────
