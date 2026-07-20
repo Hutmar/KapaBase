@@ -95,12 +95,22 @@
 }
 .gantt-bar-cell { height: 100%; width: 100%; }
 
-.gantt-marker-soll {
+/* Container für nebeneinanderliegende Marker (Liefertermin Soll + Meilensteine)
+   am oberen Rand einer Wochenzelle. Beide Chip-Typen sind Flex-Kinder, damit
+   mehrere Marker im selben Datum sauber nebeneinander umbrechen können. */
+.gantt-top-markers {
     position: absolute;
     top: 1px;
     left: 2px;
+    right: 2px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    z-index: 2;
+}
+.gantt-marker-soll {
     width: fit-content;
-    max-width: calc(100% - 4px);
+    max-width: 100%;
     font-size: 9px;
     font-weight: 700;
     line-height: 11px;
@@ -108,11 +118,25 @@
     border-radius: 2px;
     color: #fff;
     background: rgba(230,126,34,0.92);
-    z-index: 2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    flex: 0 1 auto;
+}
+.gantt-marker-milestone {
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 11px;
+    padding: 0 3px;
+    border-radius: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.4);
+    flex: 0 1 auto;
+    max-width: 100%;
+    cursor: default;
 }
 .gantt-marker-ist {
     position: absolute;
@@ -177,7 +201,12 @@
 <div class="card" style="padding-bottom:0">
     <div class="card-header">
         <h1>Gantt</h1>
-        <span id="variant-badge" class="variant-badge" title="Ausgewählte Planungsvariante"></span>
+        <div class="flex-gap">
+            <span id="variant-badge" class="variant-badge" title="Ausgewählte Planungsvariante"></span>
+            {% if has_edit_rights %}
+            <button class="btn btn-primary" onclick="openMilestoneModal()">+ Neuer Milestone</button>
+            {% endif %}
+        </div>
     </div>
 
     <div id="filterBox" class="centered-filter-container">
@@ -228,16 +257,55 @@
     </div>
 </div>
 
+<!-- Milestone-Modal (Neu anlegen UND Bearbeiten) -->
+<div class="modal-backdrop" id="milestone-modal-backdrop">
+  <div class="modal" style="width:min(480px,95vw)">
+    <div class="modal-title" id="milestone-modal-title">Neuer Milestone</div>
+    <div id="milestone-modal-alert"></div>
+
+    <div class="form-row">
+      <label>Projekt *</label>
+      <select id="ms-project"></select>
+    </div>
+    <div class="form-row">
+      <label>Name *</label>
+      <input id="ms-name" placeholder="z.B. Beta1">
+    </div>
+    <div class="form-row">
+      <label>Datum *</label>
+      <input id="ms-date" type="date">
+    </div>
+    <div class="form-row">
+      <label>Farbschema *</label>
+      <select id="ms-color-schema"></select>
+    </div>
+    <div class="form-row" style="align-items:center">
+      <label>Vorschau</label>
+      <div id="ms-preview" class="gantt-marker-milestone" style="display:inline-flex;max-width:none">–</div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-danger" id="ms-delete-btn" style="display:none;margin-right:auto" onclick="deleteMilestoneFromModal()">✕ Löschen</button>
+      <button class="btn btn-ghost" onclick="closeMilestoneModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveMilestone()">Speichern</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
 let ganttData = null;
 let selectedVariantId = null;
 let _allAvailableWeeksForDropdown = null;
 let sortMode = 'default'; // 'default' | 'ist'
 let lastRenderedWeeks = null;
 let jiraBaseUrl = '';
+let colorSchemas = [];
+let editingMilestoneId = null;
 
 const MONTHS_DE = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
 
@@ -300,6 +368,20 @@ function dateFromIso(s) {
     // 'YYYY-MM-DD' -> UTC Date
     const [y, m, d] = s.split('-').map(Number);
     return new Date(Date.UTC(y, m - 1, d));
+}
+// ISO-Kalenderwochen-Schlüssel eines 'YYYY-MM-DD'-Strings, rein UTC-basiert
+// (unabhängig von der Zeitzone des Browsers) – wird für den Vergleich von
+// Meilenstein-Terminen mit den Wochen-Spalten der Matrix benötigt.
+function isoWeekKeyFromYMD(y, m, d) {
+    const utcDate = new Date(Date.UTC(y, m - 1, d));
+    utcDate.setUTCDate(utcDate.getUTCDate() + 4 - (utcDate.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(utcDate.getUTCFullYear(), 0, 1));
+    const week = Math.ceil((((utcDate - yearStart) / 86400000) + 1) / 7);
+    return `${utcDate.getUTCFullYear()}-W${String(week).padStart(2,'0')}`;
+}
+function isoWeekKeyOf(dateIsoStr) {
+    const [y, m, d] = dateIsoStr.split('-').map(Number);
+    return isoWeekKeyFromYMD(y, m, d);
 }
 
 // ── Sortierung umschalten ────────────────────────────────────────────────────
@@ -529,10 +611,29 @@ function renderGantt(weeks) {
                     const barTitle = `${esc(p.project_name)}: ${p.bar_start_date} – ${p.bar_end_date}`;
                     cellContent += `<div class="gantt-bar-cell" style="background:${color}" title="${barTitle}"></div>`;
                 }
+
+                // Liefertermin Soll und Meilensteine dieser Woche gemeinsam
+                // im gleichen Flex-Container sammeln, damit sie bei
+                // gleichem Datum nebeneinander dargestellt werden.
+                const topMarkers = [];
                 if (p.due_kw && wk === p.due_kw) {
                     const dateLabel = p.due_date ? fmtDate(dateFromIso(p.due_date)) : '';
-                    cellContent += `<div class="gantt-marker-soll">${dateLabel}</div>`;
+                    topMarkers.push(`<div class="gantt-marker-soll">${dateLabel}</div>`);
                 }
+                (p.milestones || []).forEach(m => {
+                    if (isoWeekKeyOf(m.due_date) === wk) {
+                        const label = `${esc(m.milestone_name)}: ${fmtDate(dateFromIso(m.due_date))}`;
+                        const title = `${esc(m.milestone_name)} – ${m.due_date}`;
+                        const clickAttr = hasEditRights
+                            ? ` onclick="openMilestoneModal(${m.milestone_id})" style="cursor:pointer;background:${m.color_bg};color:${m.color_text}"`
+                            : ` style="background:${m.color_bg};color:${m.color_text}"`;
+                        topMarkers.push(`<div class="gantt-marker-milestone" title="${title}"${clickAttr}>${label}</div>`);
+                    }
+                });
+                if (topMarkers.length) {
+                    cellContent += `<div class="gantt-top-markers">${topMarkers.join('')}</div>`;
+                }
+
                 if (p.ist_kw && wk === p.ist_kw) {
                     cellContent += `<div class="gantt-marker-ist" title="Liefertermin Ist (KW ${parseInt(p.ist_kw.split('-W')[1])})">✓</div>`;
                 }
@@ -556,6 +657,150 @@ function renderGantt(weeks) {
     bodyWrap.onscroll = () => { headerWrap.scrollLeft = bodyWrap.scrollLeft; };
     initDragScroll('gantt-body-wrap');
     initDragScroll('gantt-header-wrap', 'gantt-body-wrap');
+}
+
+// ── Milestone-Verwaltung ─────────────────────────────────────────────────────
+async function loadProjectsForMilestoneDropdown() {
+    try {
+        const data = await api('GET', '/api/projects/?done=false');
+        const sel = document.getElementById('ms-project');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">– Projekt wählen –</option>';
+        (data.projects || [])
+            .filter(p => p.project_type === 'Project')
+            .forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.project_id;
+                opt.textContent = p.project_name;
+                sel.appendChild(opt);
+            });
+    } catch(e) { console.error('Fehler beim Laden der Projekte:', e); }
+}
+
+async function loadColorSchemas() {
+    try {
+        colorSchemas = await api('GET', '/api/milestones/color_schemas');
+        const sel = document.getElementById('ms-color-schema');
+        if (!sel) return;
+        sel.innerHTML = colorSchemas.map(cs =>
+            `<option value="${cs.id}" data-bg="${cs.bg}" data-text="${cs.text}" style="background:${cs.bg};color:${cs.text}">${cs.label}</option>`
+        ).join('');
+        updateMilestonePreview();
+    } catch(e) { console.error('Fehler beim Laden der Farbschemas:', e); }
+}
+
+function updateMilestonePreview() {
+    const sel = document.getElementById('ms-color-schema');
+    if (!sel || !sel.options.length) return;
+    const opt = sel.options[sel.selectedIndex];
+    const preview = document.getElementById('ms-preview');
+    if (!opt || !preview) return;
+    const bg  = opt.dataset.bg   || '#555';
+    const txt = opt.dataset.text || '#fff';
+    const name = document.getElementById('ms-name').value.trim() || 'Meilenstein';
+    const dateVal = document.getElementById('ms-date').value;
+    const dateLabel = dateVal ? fmtDate(dateFromIso(dateVal)) : '–.–.';
+    preview.style.background = bg;
+    preview.style.color = txt;
+    preview.textContent = `${name}: ${dateLabel}`;
+}
+
+// Sucht einen Milestone anhand seiner ID in den bereits geladenen
+// Gantt-Daten (jedes Projekt trägt seine Meilensteine in p.milestones).
+// Vermeidet einen zusätzlichen API-Roundtrip beim Öffnen des Edit-Modals.
+function findMilestoneById(id) {
+    for (const p of (ganttData && ganttData.projects) || []) {
+        const m = (p.milestones || []).find(x => x.milestone_id === id);
+        if (m) return { milestone: m, project_id: p.project_id };
+    }
+    return null;
+}
+
+// id = null  → Neuanlage-Modus
+// id gesetzt → Bearbeiten-Modus (Felder vorbelegt, Löschen-Button sichtbar)
+function openMilestoneModal(id = null) {
+    editingMilestoneId = id;
+    document.getElementById('milestone-modal-alert').innerHTML = '';
+    const deleteBtn = document.getElementById('ms-delete-btn');
+    const titleEl   = document.getElementById('milestone-modal-title');
+
+    if (id !== null) {
+        const found = findMilestoneById(id);
+        if (!found) {
+            toast('Milestone nicht gefunden', 'error');
+            return;
+        }
+        const { milestone, project_id } = found;
+        titleEl.textContent = 'Milestone bearbeiten';
+        document.getElementById('ms-project').value = project_id;
+        document.getElementById('ms-name').value    = milestone.milestone_name;
+        document.getElementById('ms-date').value    = milestone.due_date;
+        document.getElementById('ms-color-schema').value = milestone.color_schema;
+        deleteBtn.style.display = '';
+    } else {
+        titleEl.textContent = 'Neuer Milestone';
+        document.getElementById('ms-project').value = '';
+        document.getElementById('ms-name').value = '';
+        document.getElementById('ms-date').value = '';
+        if (colorSchemas.length) document.getElementById('ms-color-schema').selectedIndex = 0;
+        deleteBtn.style.display = 'none';
+    }
+
+    updateMilestonePreview();
+    document.getElementById('milestone-modal-backdrop').classList.add('open');
+}
+
+function closeMilestoneModal() {
+    document.getElementById('milestone-modal-backdrop').classList.remove('open');
+    editingMilestoneId = null;
+}
+
+async function saveMilestone() {
+    const al        = document.getElementById('milestone-modal-alert');
+    const projectId = document.getElementById('ms-project').value;
+    const name      = document.getElementById('ms-name').value.trim();
+    const dateVal   = document.getElementById('ms-date').value;
+    const schema    = document.getElementById('ms-color-schema').value;
+
+    if (!projectId || !name || !dateVal || !schema) {
+        al.innerHTML = '<div class="alert alert-error">Bitte alle Pflichtfelder ausfüllen</div>';
+        return;
+    }
+
+    const payload = {
+        project_id: parseInt(projectId),
+        milestone_name: name,
+        color_schema: schema,
+        due_date: dateVal,
+    };
+
+    try {
+        if (editingMilestoneId !== null) {
+            await api('PUT', `/api/milestones/${editingMilestoneId}`, payload);
+            toast('Milestone gespeichert');
+        } else {
+            await api('POST', '/api/milestones/', payload);
+            toast('Milestone angelegt');
+        }
+        closeMilestoneModal();
+        loadGantt();
+    } catch(e) {
+        al.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+    }
+}
+
+async function deleteMilestoneFromModal() {
+    if (editingMilestoneId === null) return;
+    const name = document.getElementById('ms-name').value || 'diesen Milestone';
+    if (!confirm(`Milestone "${name}" wirklich löschen?`)) return;
+    try {
+        await api('DELETE', `/api/milestones/${editingMilestoneId}`);
+        toast('Milestone gelöscht');
+        closeMilestoneModal();
+        loadGantt();
+    } catch(e) {
+        toast(e.message, 'error');
+    }
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
@@ -625,6 +870,16 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleTimeRangeFilters();
         loadGantt();
     });
+
+    document.getElementById('ms-name')?.addEventListener('input', updateMilestonePreview);
+    document.getElementById('ms-date')?.addEventListener('change', updateMilestonePreview);
+    document.getElementById('ms-color-schema')?.addEventListener('change', updateMilestonePreview);
+
+    if (hasEditRights) {
+        loadProjectsForMilestoneDropdown();
+        loadColorSchemas();
+    }
+
     loadJiraConfig();
     loadGantt();
 });

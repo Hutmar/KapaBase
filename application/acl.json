@@ -19,5 +19,8 @@
   },
   "planning_variants": {
     "edit": ["localhost"]
+  },
+  "gantt": {
+    "edit": ["localhost"]
   }
 }

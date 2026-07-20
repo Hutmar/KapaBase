@@ -92,3 +92,12 @@ create table planning(
         task_id, project_id, staff, role_id, variant_id, start_date, end_date
     )
 );
+
+create table milestone(
+	milestone_id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+	project_id int not null REFERENCES project(project_id) ON DELETE CASCADE,
+	milestone_name VARCHAR(200) NOT NULL,
+	color_schema VARCHAR(50) NOT NULL,
+	due_date date not null,
+	unique(project_id, due_date)
+);

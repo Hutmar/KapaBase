@@ -17,6 +17,7 @@ from capacity import (
     working_days_in_range,
     get_austrian_holidays,
 )
+from routers.milestones import COLOR_SCHEMAS
 
 router = APIRouter()
 
@@ -1033,7 +1034,8 @@ def get_gantt(
     - Zeitachse (weeks) wie bei /planning
     - Liste der Projekte, inkl. Start-/Enddatum des Balkens (= kleinstes bis
       größtes Planungsdatum dieses Projekts in der gewählten Variante),
-      Liefertermin Soll (due_kw) und Liefertermin Ist (ist_kw).
+      Liefertermin Soll (due_kw) und Liefertermin Ist (ist_kw), sowie
+      alle Meilensteine (milestones) des Projekts.
 
     only_complete = True (Default):
         Nur Projekte mit VOLLSTÄNDIGER Planung (d.h. jene, für die auf der
@@ -1057,6 +1059,20 @@ def get_gantt(
             ORDER BY created_at DESC
         """)
         variants = [dict(r) for r in cur.fetchall()]
+
+        # ── Meilensteine (alle, unabhängig vom Zeitfilter) ──────────────────
+        # Werden pro Projekt gruppiert und unten an das jeweilige Projekt
+        # angehängt. Zusätzlich erweitern spätere Meilenstein-Termine bei
+        # Bedarf den sichtbaren Zeitraum (siehe max_due weiter unten).
+        cur.execute("""
+            SELECT milestone_id, project_id, milestone_name, color_schema, due_date
+            FROM milestone
+            ORDER BY due_date ASC
+        """)
+        milestone_rows = [dict(r) for r in cur.fetchall()]
+        milestones_by_project: dict = {}
+        for m in milestone_rows:
+            milestones_by_project.setdefault(m["project_id"], []).append(m)
 
         # ── Zeitbereich (analog zu /planning) ───────────────────────────────
         cur.execute("""
@@ -1094,6 +1110,12 @@ def get_gantt(
         max_plan_end = plan_end_row["max_plan_end"] if plan_end_row else None
         if max_plan_end:
             max_due = max(max_due, max_plan_end) if max_due else max_plan_end
+
+        # Meilenstein-Termine ebenfalls berücksichtigen, damit auch weit in
+        # der Zukunft liegende Meilensteine im sichtbaren Zeitraum landen.
+        if milestone_rows:
+            max_ms_due = max(m["due_date"] for m in milestone_rows)
+            max_due = max(max_due, max_ms_due) if max_due else max_ms_due
 
         if max_due:
             md_iso   = max_due.isocalendar()
@@ -1238,6 +1260,19 @@ def get_gantt(
             iso    = p["due_date"].isocalendar()
             due_kw = f"{iso[0]}-W{iso[1]:02d}"
 
+        # ── Meilensteine dieses Projekts, inkl. aufgelöster Farben ──────────
+        proj_milestones = []
+        for m in milestones_by_project.get(pid, []):
+            schema = COLOR_SCHEMAS.get(m["color_schema"], {})
+            proj_milestones.append({
+                "milestone_id":   m["milestone_id"],
+                "milestone_name": m["milestone_name"],
+                "due_date":       str(m["due_date"]),
+                "color_schema":   m["color_schema"],
+                "color_bg":       schema.get("bg", "#555555"),
+                "color_text":     schema.get("text", "#FFFFFF"),
+            })
+
         result_projects.append({
             "project_id":     pid,
             "project_name":   p["project_name"],
@@ -1250,6 +1285,7 @@ def get_gantt(
             "is_complete":    is_complete,
             "bar_start_date": str(bar_start_map[pid]),
             "bar_end_date":   str(bar_end_map[pid]),
+            "milestones":     proj_milestones,
         })
 
     result_projects.sort(key=lambda x: (x["bar_start_date"], x["due_date"] or ""))

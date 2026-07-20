@@ -17,6 +17,7 @@ from routers import planning_variants
 from routers import sync_config
 from routers import notifications
 from routers import config
+from routers import milestones
 from acl import has_permission
 from scheduler import start_scheduler, stop_scheduler
 
@@ -57,6 +58,7 @@ app.include_router(planning_variants.router, prefix="/api/planning_variants", ta
 app.include_router(sync_config.router,         prefix="/api/sync/config",         tags=["Sync Config"])
 app.include_router(notifications.router, prefix="/api/notifications",      tags=["Notifications"])
 app.include_router(config.router,     prefix="/api/config",           tags=["Config"])
+app.include_router(milestones.router, prefix="/api/milestones",       tags=["Milestones"])
 
 # ── Frontend HTML Seiten ───────────────────────────────────────────────────────
 
@@ -93,10 +95,11 @@ async def page_planning(request: Request):
 async def page_planning_variants(request: Request):
     editable = has_permission(request, "planning_variants", "edit")
     return templates.TemplateResponse("planning_variants.html", {"request": request, "has_edit_rights": editable})
-
+  
 @app.get("/gantt", response_class=HTMLResponse)
 async def page_gantt(request: Request):
-    return templates.TemplateResponse("gantt.html", {"request": request})
+    editable = has_permission(request, "gantt", "edit")
+    return templates.TemplateResponse("gantt.html", {"request": request, "has_edit_rights": editable})
 
 @app.get("/worked_hours", response_class=HTMLResponse)
 async def page_worked_hours_standalone(request: Request):
@@ -136,7 +139,6 @@ async def page_planning_status(
             "has_edit_rights":      editable,
         }
     )
-
-
+  
 if __name__ == "__main__":    
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
