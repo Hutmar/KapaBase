@@ -1,3 +1,4 @@
+<!-- templates/planning.html -->
 {% extends "base.html" %}
 {% block title %}Planung – Kapaverwaltung{% endblock %}  
 {% block content %}
@@ -890,7 +891,12 @@ ordered.forEach(sr => {
       return;
     }
 
-    if (absInfo && absInfo.is_majority) {
+    // Vollständig abwesend: nur dann als "Abwesend"-Zelle darstellen, wenn
+    // KEINE Planung (auch kein Standard-Task) für diese Woche/Rolle
+    // vorhanden ist. Ist ein Standard-Task vorhanden, wird dieser trotz
+    // Abwesenheit angezeigt (Anforderung: Standard-Task nur dann NICHT
+    // zeigen, wenn bereits eine andere Planung existiert).
+    if (absInfo && absInfo.is_majority && weekItems.length === 0) {
       const label = absInfo.type || 'Abwesend';
       const frac  = absInfo.total_days > 0 ? `${absInfo.absent_days}/${absInfo.total_days} T.` : '';
       row += `<td class="absent-cell" title="${label}: ${frac}">

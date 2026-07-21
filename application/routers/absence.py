@@ -1,3 +1,4 @@
+# routers/absence.py
 """
 routers/absence.py – Abwesenheitsverwaltung (Tabelle: absence)
 """
@@ -6,6 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import date, timedelta
 from db import get_cursor
+from capacity import working_days_in_range
 from routers.planning import _effective_hours_in_date_range, _build_at_hols
 from routers.config import get_current_fiscal_year_range
 
@@ -118,6 +120,30 @@ def _delete_plannings_reduced_to_zero(cur, shortname: str,
 
     return deleted
 
+# ── Hilfsfunktion: Arbeitstage (Wochenenden/Feiertage raus) für eine Zeile ────
+def _compute_display_days(absence_from: date, absence_to: date,
+                          fiscal_year_only: bool,
+                          fy_start: Optional[date], fy_end: Optional[date]):
+    """
+    Berechnet für eine einzelne Abwesenheit:
+    - disp_from/disp_to: ggf. auf das Wirtschaftsjahr geklippter Zeitraum
+    - display_calendar_days: Kalendertage in diesem (geklippten) Zeitraum
+    - display_days: reine Arbeitstage (ohne Wochenenden/österr. Feiertage)
+      in diesem Zeitraum, via working_days_in_range()
+    """
+    disp_from = absence_from
+    disp_to   = absence_to
+    if fiscal_year_only and fy_start is not None and fy_end is not None:
+        disp_from = max(disp_from, fy_start)
+        disp_to   = min(disp_to,   fy_end)
+
+    if disp_to < disp_from:
+        return disp_from, disp_to, 0, 0
+
+    calendar_days = (disp_to - disp_from).days + 1
+    working_days  = len(working_days_in_range(disp_from, disp_to))
+    return disp_from, disp_to, calendar_days, working_days
+
 # ── Endpunkte ──────────────────────────────────────────────────────────────────
 @router.get("/")
 def list_absences(shortname: Optional[str] = None, fiscal_year_only: bool = False):
@@ -128,7 +154,12 @@ def list_absences(shortname: Optional[str] = None, fiscal_year_only: bool = Fals
     aktuellen Wirtschaftsjahres überschneiden (siehe config.json / Gruppe
     "fiscal_year" und routers/config.py). Von-/Bis-Datum werden dabei
     UNVERÄNDERT (nicht geklippt) zurückgegeben – die Einschränkung auf den
-    WJ-Anteil erfolgt nur bei der Tage-Berechnung im Frontend.
+    WJ-Anteil erfolgt nur bei der Tage-Berechnung (display_days).
+
+    Zusätzlich zu den Rohdaten liefert jede Zeile:
+    - display_calendar_days: Kalendertage im (ggf. WJ-geklippten) Zeitraum
+    - display_days: reine Arbeitstage (Wochenenden/Feiertage bereits
+      herausgerechnet) im (ggf. WJ-geklippten) Zeitraum
     """
     fy_start: Optional[date] = None
     fy_end:   Optional[date] = None
@@ -153,63 +184,92 @@ def list_absences(shortname: Optional[str] = None, fiscal_year_only: bool = Fals
             {where}
             ORDER BY shortname, absence_from DESC
         """, params)
-        return cur.fetchall()
+        rows = [dict(r) for r in cur.fetchall()]
+
+    for r in rows:
+        _, _, cal_days, work_days = _compute_display_days(
+            r["absence_from"], r["absence_to"], fiscal_year_only, fy_start, fy_end
+        )
+        r["display_calendar_days"] = cal_days
+        r["display_days"]          = work_days
+
+    return rows
 
 @router.get("/summary", response_model=List[Dict[str, Any]])
 def get_absence_summary(shortname: Optional[str] = None, fiscal_year_only: bool = False):
     """
     Gibt eine Übersicht über Abwesenheitstage pro Mitarbeiter zurück.
-    Umfasst Urlaubstage, gesamte Abwesenheitstage sowie erste und letzte Abwesenheit.
+    Umfasst Urlaubstage, GLAZ-Tage, gesamte Abwesenheitstage sowie erste und
+    letzte Abwesenheit.
+
+    Die Tage-Zählung berücksichtigt NUR Arbeitstage (Mo–Fr, keine
+    österreichischen Feiertage) – Wochenenden und Feiertage werden aus der
+    Zählung herausgerechnet (siehe working_days_in_range()).
 
     fiscal_year_only=True: Es werden nur Abwesenheiten berücksichtigt, die sich
     mit dem aktuellen Wirtschaftsjahr überschneiden (siehe config.json / Gruppe
-    "fiscal_year"). Bei der Aggregation (Urlaubstage, Gesamte Abwesenheitstage,
-    Erste/Letzte Abwesenheit) wird der Zeitraum jeder Abwesenheit dabei auf
-    das Wirtschaftsjahr geklippt (GREATEST/LEAST), sodass Tage außerhalb des
-    WJ nicht mitgezählt werden.
+    "fiscal_year"). Bei der Aggregation (Tage, Erste/Letzte Abwesenheit) wird
+    der Zeitraum jeder Abwesenheit dabei auf das Wirtschaftsjahr geklippt,
+    sodass Tage außerhalb des WJ nicht mitgezählt werden.
     """
+    fy_start: Optional[date] = None
+    fy_end:   Optional[date] = None
+    if fiscal_year_only:
+        fy_start, fy_end = get_current_fiscal_year_range()
+
     with get_cursor() as cur:
-        if fiscal_year_only:
-            fy_start, fy_end = get_current_fiscal_year_range()
-            query = """
-                SELECT
-                    shortname,
-                    SUM(CASE WHEN absence_type = 'Urlaub'
-                        THEN (LEAST(absence_to, %(fy_end)s::date) - GREATEST(absence_from, %(fy_start)s::date) + 1)
-                        ELSE 0 END) AS vacation_days,
-                    SUM(LEAST(absence_to, %(fy_end)s::date) - GREATEST(absence_from, %(fy_start)s::date) + 1) AS total_absence_days,
-                    MIN(GREATEST(absence_from, %(fy_start)s::date)) AS first_absence,
-                    MAX(LEAST(absence_to, %(fy_end)s::date)) AS last_absence
-                FROM absence
-                WHERE absence_from <= %(fy_end)s AND absence_to >= %(fy_start)s
-            """
-            params: dict = {"fy_start": fy_start, "fy_end": fy_end}
-            if shortname:
-                query += " AND shortname = %(shortname)s"
-                params["shortname"] = shortname
-            query += " GROUP BY shortname ORDER BY shortname"
-            cur.execute(query, params)
-            return cur.fetchall()
-
-        query = """
-            SELECT
-                shortname,
-                SUM(CASE WHEN absence_type = 'Urlaub' THEN (absence_to - absence_from + 1) ELSE 0 END) AS vacation_days,
-                SUM(absence_to - absence_from + 1) AS total_absence_days,
-                MIN(absence_from) AS first_absence,
-                MAX(absence_to) AS last_absence
-            FROM
-                absence
-        """
-        params_list = []
+        conditions = []
+        params: list = []
         if shortname:
-            query += " WHERE shortname = %s"
-            params_list.append(shortname)
+            conditions.append("shortname = %s")
+            params.append(shortname)
+        if fiscal_year_only:
+            conditions.append("absence_from <= %s AND absence_to >= %s")
+            params.extend([fy_end, fy_start])
+        where = "WHERE " + " AND ".join(conditions) if conditions else ""
+        cur.execute(f"""
+            SELECT shortname, absence_from, absence_to, absence_type
+            FROM absence
+            {where}
+            ORDER BY shortname, absence_from
+        """, params)
+        rows = cur.fetchall()
 
-        query += " GROUP BY shortname ORDER BY shortname"
+    summary: Dict[str, Dict[str, Any]] = {}
 
-        cur.execute(query, params_list)
-        return cur.fetchall()
+    for r in rows:
+        sn    = r["shortname"]
+        af    = r["absence_from"]
+        at    = r["absence_to"]
+        atype = r["absence_type"]
+
+        disp_from, disp_to, _, days = _compute_display_days(
+            af, at, fiscal_year_only, fy_start, fy_end
+        )
+        if disp_to < disp_from:
+            continue
+
+        entry = summary.setdefault(sn, {
+            "shortname":          sn,
+            "vacation_days":      0,
+            "glaz_days":          0,
+            "total_absence_days": 0,
+            "first_absence":      None,
+            "last_absence":       None,
+        })
+
+        entry["total_absence_days"] += days
+        if atype == "Urlaub":
+            entry["vacation_days"] += days
+        elif atype == "GLAZ":
+            entry["glaz_days"] += days
+
+        if entry["first_absence"] is None or disp_from < entry["first_absence"]:
+            entry["first_absence"] = disp_from
+        if entry["last_absence"] is None or disp_to > entry["last_absence"]:
+            entry["last_absence"] = disp_to
+
+    return sorted(summary.values(), key=lambda x: x["shortname"])
 
 # ── Teamtage ───────────────────────────────────────────────────────────────────
 @router.get("/teamdays")

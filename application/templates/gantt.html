@@ -1,3 +1,4 @@
+<!-- templates/gantt.html -->
 {% extends "base.html" %}
 {% block title %}Gantt – Kapaverwaltung{% endblock %}
 {% block content %}
@@ -196,6 +197,9 @@
     border: 1px solid rgba(74,144,217,0.3);
 }
 .variant-badge.active { background: rgba(46,204,113,0.15); color: var(--accent2); border-color: rgba(46,204,113,0.3); }
+
+/* Kalenderwochen-Eingabefeld: rote Umrandung bei ungültigem Format */
+.input-error { border-color: var(--danger) !important; }
 </style>
 
 <div class="card" style="padding-bottom:0">
@@ -273,7 +277,11 @@
     </div>
     <div class="form-row">
       <label>Datum *</label>
-      <input id="ms-date" type="date">
+      <div style="display:flex;gap:6px;align-items:center;width:100%">
+        <input id="ms-date-kw" type="text" placeholder="KW" title="Kalenderwoche (ohne Jahr) – bezieht sich immer auf die nächstgelegene zukünftige Kalenderwoche mit dieser Nummer"
+               style="width:60px;flex:none;text-align:center" oninput="onKwInput('ms-date-kw','ms-date')">
+        <input id="ms-date" type="date" style="flex:1;min-width:0" onchange="onDateInput('ms-date','ms-date-kw')">
+      </div>
     </div>
     <div class="form-row">
       <label>Farbschema *</label>
@@ -382,6 +390,74 @@ function isoWeekKeyFromYMD(y, m, d) {
 function isoWeekKeyOf(dateIsoStr) {
     const [y, m, d] = dateIsoStr.split('-').map(Number);
     return isoWeekKeyFromYMD(y, m, d);
+}
+
+// ── Datum ↔ Kalenderwoche (Milestone-Modal, analog Projekte-Seite) ─────────────
+function isoWeekNumberOf(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const utc = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
+    return String(weekNo).padStart(2, '0');
+}
+
+function mondayOfIsoWeek(year, week) {
+    const jan4    = new Date(Date.UTC(year, 0, 4));
+    const jan4Day = jan4.getUTCDay() || 7;
+    const kw1mon  = new Date(jan4.getTime() - (jan4Day - 1) * 86400000);
+    return new Date(kw1mon.getTime() + (week - 1) * 7 * 86400000);
+}
+
+function parseWeekNumber(s) {
+    const m = /^\s*(?:kw|w)?\s*0*(\d{1,2})\s*$/i.exec(s || '');
+    if (!m) return null;
+    const week = parseInt(m[1]);
+    if (week < 1 || week > 53) return null;
+    return week;
+}
+
+function nearestFutureMondayForWeek(week) {
+    const today    = new Date();
+    const todayUTC = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+
+    let best = null;
+    [today.getFullYear(), today.getFullYear() + 1].forEach(year => {
+        const monday = mondayOfIsoWeek(year, week);
+        if (monday.getTime() >= todayUTC) {
+            if (!best || monday.getTime() < best.getTime()) best = monday;
+        }
+    });
+    if (!best) {
+        best = mondayOfIsoWeek(today.getFullYear() + 1, week);
+    }
+    return best;
+}
+
+function onDateInput(dateInputId, kwInputId) {
+    const dateVal = document.getElementById(dateInputId).value;
+    const kwInput = document.getElementById(kwInputId);
+    kwInput.value = isoWeekNumberOf(dateVal);
+    kwInput.classList.remove('input-error');
+}
+
+function onKwInput(kwInputId, dateInputId) {
+    const kwInput = document.getElementById(kwInputId);
+    const val = kwInput.value;
+    if (!val.trim()) { kwInput.classList.remove('input-error'); return; }
+
+    const week = parseWeekNumber(val);
+    if (week === null) {
+        kwInput.classList.add('input-error');
+        return;
+    }
+    kwInput.classList.remove('input-error');
+    kwInput.value = String(week).padStart(2, '0');
+
+    const monday = nearestFutureMondayForWeek(week);
+    document.getElementById(dateInputId).value = monday.toISOString().split('T')[0];
 }
 
 // ── Sortierung umschalten ────────────────────────────────────────────────────
@@ -613,12 +689,17 @@ function renderGantt(weeks) {
                 }
 
                 // Liefertermin Soll und Meilensteine dieser Woche gemeinsam
-                // im gleichen Flex-Container sammeln, damit sie bei
-                // gleichem Datum nebeneinander dargestellt werden.
-                const topMarkers = [];
-                if (p.due_kw && wk === p.due_kw) {
-                    const dateLabel = p.due_date ? fmtDate(dateFromIso(p.due_date)) : '';
-                    topMarkers.push(`<div class="gantt-marker-soll">${dateLabel}</div>`);
+                // im gleichen Flex-Container sammeln UND nach tatsächlichem
+                // Datum (aufsteigend) sortiert darstellen, damit z.B. ein
+                // früherer Milestone vor einem späteren Liefertermin Soll
+                // angezeigt wird (statt Liefertermin Soll immer zuerst).
+                const weekMarkerItems = [];
+                if (p.due_kw && wk === p.due_kw && p.due_date) {
+                    const dateLabel = fmtDate(dateFromIso(p.due_date));
+                    weekMarkerItems.push({
+                        date: dateFromIso(p.due_date),
+                        html: `<div class="gantt-marker-soll">${dateLabel}</div>`,
+                    });
                 }
                 (p.milestones || []).forEach(m => {
                     if (isoWeekKeyOf(m.due_date) === wk) {
@@ -627,11 +708,15 @@ function renderGantt(weeks) {
                         const clickAttr = hasEditRights
                             ? ` onclick="openMilestoneModal(${m.milestone_id})" style="cursor:pointer;background:${m.color_bg};color:${m.color_text}"`
                             : ` style="background:${m.color_bg};color:${m.color_text}"`;
-                        topMarkers.push(`<div class="gantt-marker-milestone" title="${title}"${clickAttr}>${label}</div>`);
+                        weekMarkerItems.push({
+                            date: dateFromIso(m.due_date),
+                            html: `<div class="gantt-marker-milestone" title="${title}"${clickAttr}>${label}</div>`,
+                        });
                     }
                 });
-                if (topMarkers.length) {
-                    cellContent += `<div class="gantt-top-markers">${topMarkers.join('')}</div>`;
+                weekMarkerItems.sort((a, b) => a.date - b.date);
+                if (weekMarkerItems.length) {
+                    cellContent += `<div class="gantt-top-markers">${weekMarkerItems.map(x => x.html).join('')}</div>`;
                 }
 
                 if (p.ist_kw && wk === p.ist_kw) {
@@ -735,6 +820,7 @@ function openMilestoneModal(id = null) {
         document.getElementById('ms-project').value = project_id;
         document.getElementById('ms-name').value    = milestone.milestone_name;
         document.getElementById('ms-date').value    = milestone.due_date;
+        document.getElementById('ms-date-kw').value = isoWeekNumberOf(milestone.due_date);
         document.getElementById('ms-color-schema').value = milestone.color_schema;
         deleteBtn.style.display = '';
     } else {
@@ -742,10 +828,12 @@ function openMilestoneModal(id = null) {
         document.getElementById('ms-project').value = '';
         document.getElementById('ms-name').value = '';
         document.getElementById('ms-date').value = '';
+        document.getElementById('ms-date-kw').value = '';
         if (colorSchemas.length) document.getElementById('ms-color-schema').selectedIndex = 0;
         deleteBtn.style.display = 'none';
     }
 
+    document.getElementById('ms-date-kw').classList.remove('input-error');
     updateMilestonePreview();
     document.getElementById('milestone-modal-backdrop').classList.add('open');
 }
@@ -757,6 +845,12 @@ function closeMilestoneModal() {
 
 async function saveMilestone() {
     const al        = document.getElementById('milestone-modal-alert');
+
+    if (document.getElementById('ms-date-kw').classList.contains('input-error')) {
+        al.innerHTML = '<div class="alert alert-error">Ungültige Kalenderwoche – bitte nur die Wochennummer angeben (z.B. 3 oder KW3)</div>';
+        return;
+    }
+
     const projectId = document.getElementById('ms-project').value;
     const name      = document.getElementById('ms-name').value.trim();
     const dateVal   = document.getElementById('ms-date').value;

@@ -1,3 +1,4 @@
+<!-- templates/absence.html -->
 {% extends "base.html" %}
 {% block title %}Abwesenheiten – Kapaverwaltung{% endblock %}
 
@@ -34,8 +35,8 @@
                         <th>Mitarbeiter</th>
                         <th>Urlaubstage</th>
                         <th>Gesamte Abwesenheitstage</th>
-                        <th>Erste Abwesenheit</th>
-                        <th>Letzte Abwesenheit</th>
+                        <th>von KW</th>
+                        <th>bis KW</th>
                     </tr>
                 </thead>
                 <tbody id="absence-summary-body"></tbody>
@@ -75,7 +76,9 @@
             <tr>
                 <th>Mitarbeiter</th>
                 <th>Von</th>
+                <th>KW</th>
                 <th>Bis</th>
+                <th>KW</th>
                 <th>Tage</th>
                 <th>Typ</th>
                 <th style="width:80px"></th>
@@ -157,10 +160,6 @@ const SUMMARY_COLLAPSED_KEY = 'absenceSummaryCollapsed';
 const TEAMDAYS_COLLAPSED_KEY = 'absenceTeamdaysCollapsed';
 const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
-// Zeitraum des aktuellen Wirtschaftsjahres (für die Tage-Klippung in der Anzeige)
-let fiscalYearStart = null;
-let fiscalYearEnd   = null;
-
 async function init() {
     const staffResponse = await api('GET', '/api/staff/');
     const staffMembers = staffResponse.staff_members;
@@ -186,7 +185,7 @@ async function init() {
         document.getElementById('f-fiscal-year-only').checked = (savedFiscalYearOnly === 'true');
     }
 
-    // WJ-Zeitraum MUSS geladen sein, bevor die Tage-Spalte berechnet wird
+    // WJ-Zeitraum laden (nur für die Anzeige des Zeitraum-Labels)
     await loadFiscalYearRange();
 
     loadAbsences();
@@ -224,12 +223,10 @@ async function init() {
     });
 }
 
-// ── Wirtschaftsjahr-Zeitraum laden und anzeigen ─────────────────────────────────
+// ── Wirtschaftsjahr-Zeitraum laden und anzeigen (nur für Label) ─────────────────
 async function loadFiscalYearRange() {
     try {
         const range = await api('GET', '/api/config/fiscal_year/current');
-        fiscalYearStart = range.start_date;
-        fiscalYearEnd   = range.end_date;
         const label = document.getElementById('fiscal-year-range-label');
         if (label) label.textContent = `(${range.start_date} – ${range.end_date})`;
     } catch(e) {
@@ -265,30 +262,6 @@ function updateCalendarWeek(event) {
     const inputElement = event.target;
     const cwElementId = inputElement.id + '-cw';
     document.getElementById(cwElementId).textContent = `(KW ${getCalendarWeek(inputElement.value)})`;
-}
-
-// Anzahl der (Kalender-)Tage zwischen zwei Datums-Strings, inklusive beider
-// Endpunkte – analog zur Berechnung im Backend (/api/absence/summary).
-function calcDaysInclusive(fromStr, toStr) {
-    const from = new Date(fromStr);
-    const to = new Date(toStr);
-    if (isNaN(from.getTime()) || isNaN(to.getTime())) return 0;
-    const diffMs = to.getTime() - from.getTime();
-    return Math.round(diffMs / 86400000) + 1;
-}
-
-// Tage-Anzahl für die "Tage"-Spalte der Detailliste: bei aktivem WJ-Filter
-// wird der Zeitraum auf den aktuellen WJ-Bereich geklippt, d.h. bei
-// Abwesenheiten, die über den WJ-Wechsel hinausgehen, werden nur die Tage
-// gezählt, die tatsächlich im aktuellen WJ liegen. "Von"/"Bis" in den
-// jeweiligen Spalten bleiben davon unberührt (zeigen das reale Datum).
-function calcDisplayDays(fromStr, toStr, fiscalYearOnly) {
-    if (!fiscalYearOnly || !fiscalYearStart || !fiscalYearEnd) {
-        return calcDaysInclusive(fromStr, toStr);
-    }
-    const clippedFrom = fromStr < fiscalYearStart ? fiscalYearStart : fromStr;
-    const clippedTo   = toStr   > fiscalYearEnd   ? fiscalYearEnd   : toStr;
-    return calcDaysInclusive(clippedFrom, clippedTo);
 }
 
 function toggleSummaryTable() {
@@ -335,6 +308,7 @@ async function loadAbsenceSummary() {
 
     let totalVacationAll = 0;
     let totalAbsenceAll = 0;
+    let totalGlazAll = 0;
     let overallMinAbsenceDate = null;
     let overallMaxAbsenceDate = null;
 
@@ -342,17 +316,24 @@ async function loadAbsenceSummary() {
         tbody.innerHTML = `<tr><td colspan="5" style="text-align: center;">Keine Abwesenheitsdaten vorhanden${fiscalYearOnly ? ' im aktuellen Wirtschaftsjahr' : ''}.</td></tr>`;
     } else {
         summary.forEach(s => {
+            const vacationDays = s.vacation_days || 0;
+            const glazDays     = s.glaz_days || 0;
+            const totalDays    = s.total_absence_days || 0;
+            const fromKw = s.first_absence ? `KW ${getCalendarWeek(s.first_absence)}` : '-';
+            const toKw   = s.last_absence  ? `KW ${getCalendarWeek(s.last_absence)}`  : '-';
+
             tbody.innerHTML += `
                 <tr>
                     <td class="text-mono">${s.shortname}</td>
-                    <td>${s.vacation_days || 0}</td>
-                    <td>${s.total_absence_days || 0}</td>
-                    <td>${s.first_absence || '-'}</td>
-                    <td>${s.last_absence || '-'}</td>
+                    <td>${vacationDays}</td>
+                    <td title="Urlaubstage: ${vacationDays}, GLAZ: ${glazDays}">${totalDays}</td>
+                    <td class="text-mono">${fromKw}</td>
+                    <td class="text-mono">${toKw}</td>
                 </tr>
             `;
-            totalVacationAll += (s.vacation_days || 0);
-            totalAbsenceAll += (s.total_absence_days || 0);
+            totalVacationAll += vacationDays;
+            totalAbsenceAll += totalDays;
+            totalGlazAll += glazDays;
             if (s.first_absence) {
                 const d = new Date(s.first_absence);
                 if (overallMinAbsenceDate === null || d < overallMinAbsenceDate) overallMinAbsenceDate = d;
@@ -363,16 +344,20 @@ async function loadAbsenceSummary() {
             }
         });
 
-        const formattedMinDate = overallMinAbsenceDate ? overallMinAbsenceDate.toISOString().split('T')[0] : '-';
-        const formattedMaxDate = overallMaxAbsenceDate ? overallMaxAbsenceDate.toISOString().split('T')[0] : '-';
+        const overallFromKw = overallMinAbsenceDate
+            ? `KW ${getCalendarWeek(overallMinAbsenceDate.toISOString().split('T')[0])}`
+            : '-';
+        const overallToKw = overallMaxAbsenceDate
+            ? `KW ${getCalendarWeek(overallMaxAbsenceDate.toISOString().split('T')[0])}`
+            : '-';
 
         tfoot.innerHTML = `
             <tr>
                 <th style="text-align: right;">Gesamt:</th>
                 <th>${totalVacationAll}</th>
-                <th>${totalAbsenceAll}</th>
-                <th>${formattedMinDate}</th>
-                <th>${formattedMaxDate}</th>
+                <th title="Urlaubstage: ${totalVacationAll}, GLAZ: ${totalGlazAll}">${totalAbsenceAll}</th>
+                <th>${overallFromKw}</th>
+                <th>${overallToKw}</th>
             </tr>
         `;
     }
@@ -438,7 +423,7 @@ async function loadAbsences() {
     footer.innerHTML = '';
 
     if (!staff) {
-        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.</td></tr>`;
+        absenceBody.innerHTML = `<tr><td colspan="8" style="text-align: center;">Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.</td></tr>`;
         return;
     }
 
@@ -449,21 +434,33 @@ async function loadAbsences() {
     const rows = await api('GET', `/api/absence/?${params.toString()}`);
 
     if (rows.length === 0) {
-        absenceBody.innerHTML = `<tr><td colspan="6" style="text-align: center;">Keine Abwesenheiten für diesen Mitarbeiter${fiscalYearOnly ? ' im aktuellen Wirtschaftsjahr' : ''}.</td></tr>`;
+        absenceBody.innerHTML = `<tr><td colspan="8" style="text-align: center;">Keine Abwesenheiten für diesen Mitarbeiter${fiscalYearOnly ? ' im aktuellen Wirtschaftsjahr' : ''}.</td></tr>`;
     } else {
         let totalDays = 0;
+        let totalVacationDays = 0;
+        let totalGlazDays = 0;
         absenceBody.innerHTML = rows.map(a => {
             const isTeamday = a.absence_type === 'Teamday';
-            // "Tage"-Spalte: bei aktivem WJ-Filter auf den WJ-Anteil geklippt.
+            // "Tage"-Spalte kommt jetzt direkt vom Backend: reine Arbeitstage
+            // (Wochenenden/Feiertage bereits herausgerechnet), bei aktivem
+            // WJ-Filter zusätzlich auf den WJ-Anteil geklippt.
             // Von/Bis zeigen weiterhin das reale (nicht geklippte) Datum.
-            const days = calcDisplayDays(a.absence_from, a.absence_to, fiscalYearOnly);
+            const days = a.display_days;
+            const calDays = a.display_calendar_days;
             totalDays += days;
+            if (a.absence_type === 'Urlaub') totalVacationDays += days;
+            if (a.absence_type === 'GLAZ')   totalGlazDays += days;
+            const tooltip = `Kalendertage: ${calDays}, Arbeitstage: ${days} (Wochenenden & Feiertage abgezogen)`;
+            const fromKw = `KW ${getCalendarWeek(a.absence_from)}`;
+            const toKw   = `KW ${getCalendarWeek(a.absence_to)}`;
             return `
             <tr>
                 <td class="text-mono">${a.shortname}</td>
                 <td>${a.absence_from}</td>
+                <td class="text-mono text-dim">${fromKw}</td>
                 <td>${a.absence_to}</td>
-                <td class="text-mono" style="text-align:center">${days}</td>
+                <td class="text-mono text-dim">${toKw}</td>
+                <td class="text-mono" style="text-align:center" title="${tooltip}">${days}</td>
                 <td>${absenceTypeBadge(a.absence_type)}</td>
                 <td>
                     <div class="flex-gap">
@@ -477,10 +474,12 @@ async function loadAbsences() {
         `;
         }).join('');
 
+        const totalTooltip = `Urlaub: ${totalVacationDays}, GLAZ: ${totalGlazDays}`;
+
         footer.innerHTML = `
             <tr>
-                <th colspan="3" style="text-align:right">Gesamt:</th>
-                <th class="text-mono" style="text-align:center">${totalDays}</th>
+                <th colspan="5" style="text-align:right">Gesamt:</th>
+                <th class="text-mono" style="text-align:center" title="${totalTooltip}">${totalDays}</th>
                 <th colspan="2"></th>
             </tr>
         `;

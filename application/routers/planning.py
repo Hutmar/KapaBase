@@ -1,4 +1,5 @@
 # routers/planning.py
+# routers/planning.py
 """
 routers/planning.py – Ressourcenzuordnung (Tabelle: planning)
 """
@@ -479,8 +480,11 @@ def get_planning(
 
         # ── Standard-Task automatisch einfügen (nur zur Anzeige!) ────────────
         # Für Mitarbeiter mit hinterlegtem Standard-Task wird in aktuellen und
-        # zukünftigen Kalenderwochen, in denen weder eine echte Planung noch
-        # eine Abwesenheit vorhanden ist, der Standard-Task eingeblendet.
+        # zukünftigen Kalenderwochen, in denen KEINE echte Planung vorhanden
+        # ist, der Standard-Task eingeblendet – UNABHÄNGIG davon, ob in der
+        # Woche (Teil-)Abwesenheiten vorliegen. Einzige Ausnahme: es existiert
+        # bereits eine echte Planung (beliebige Rolle) für diese KW – dann
+        # wird der Standard-Task nicht angezeigt.
         # Es wird NICHTS in der Tabelle "planning" gespeichert.
         cur.execute("""
             SELECT s.shortname, s.default_task_id,
@@ -501,10 +505,15 @@ def get_planning(
                 for wk in weeks:
                     if wk < today_wk:
                         continue
-                    if absence_map.get(name, {}).get(wk):
-                        continue
                     staff_week_entries = plan_map.get(name, {}).get(wk, [])
                     if staff_week_entries:
+                        continue
+                    # Standard-Task nur anzeigen, wenn die effektive
+                    # Wochenkapazität > 0 ist (bei einer vollen/mehrtägigen
+                    # Abwesenheit mit 0 effektiven Stunden wird er NICHT
+                    # angezeigt, auch wenn keine echte Planung existiert).
+                    week_hours = capacity_by_staff.get(name, {}).get("week_hours", {}).get(wk, 0.0)
+                    if week_hours <= 0:
                         continue
                     plan_map.setdefault(name, {}).setdefault(wk, []).append({
                         "planning_id":     None,
