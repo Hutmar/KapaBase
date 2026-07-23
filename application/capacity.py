@@ -2,29 +2,115 @@
 capacity.py – Business-Logik für Kapazitätsberechnungen
 Verwendet:
 - python3-holidays  (ISO-8601-konforme Feiertagsberechnung für Österreich)
+- config.json (Schlüssel "additional_holidays") für zusätzliche, unternehmens-
+  spezifische Feiertage, die ergänzend zu den offiziellen österreichischen
+  Feiertagen berücksichtigt werden sollen (z.B. Betriebsurlaub, Fenstertage).
 - Eigene DB-Abfragen für Abwesenheiten und Mitarbeiter-Stunden
-"""  
+"""
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from decimal import Decimal # Importiert das Decimal-Modul für präzise Berechnungen
-import holidays  
+from decimal import Decimal  # Importiert das Decimal-Modul für präzise Berechnungen
+import json
+import logging
+import holidays
 from db import get_cursor
 
-# ── Hilfsfunktionen ────────────────────────────────────────────────────────────  
-def get_austrian_holidays(year: int) -> set:
-    """Gibt alle österreichischen Feiertage (Wien = Gesamtösterreich) für ein Jahr zurück."""
+logger = logging.getLogger(__name__)
+
+# ── Zusätzliche Feiertage aus config.json ──────────────────────────────────────
+CONFIG_PATH = Path(__file__).parent / "config.json"
+
+# Einfacher, mtime-basierter Cache: Änderungen an config.json wirken sich
+# ohne Neustart der Anwendung aus, die Datei wird aber nicht bei jedem
+# Aufruf neu von der Platte gelesen.
+_additional_holidays_cache: Optional[set] = None
+_additional_holidays_mtime: Optional[float] = None
+
+
+def _load_additional_holidays() -> set:
+    """
+    Liest zusätzliche (unternehmensspezifische) Feiertage aus config.json,
+    Schlüssel "additional_holidays" – eine einfache Liste von
+    ISO-Datumsstrings ("YYYY-MM-DD"), z.B.:
+
+        {
+          "additional_holidays": ["2026-05-02", "2026-12-24", "2026-12-31"]
+        }
+
+    Diese Tage werden zusätzlich zu den offiziellen österreichischen
+    Feiertagen (siehe get_austrian_holidays()) als Feiertage behandelt –
+    und zwar überall dort, wo Arbeitstage berechnet werden (Kapazität,
+    Abwesenheiten, Restaufwand-/Liefertermin-Berechnungen usw.), da all
+    diese Stellen letztlich über get_austrian_holidays() bzw.
+    working_days_in_range() laufen.
+    """
+    global _additional_holidays_cache, _additional_holidays_mtime
+
+    if not CONFIG_PATH.exists():
+        return set()
+
     try:
-        return set(holidays.Austria(subdiv="W", years=year).keys())
+        mtime = CONFIG_PATH.stat().st_mtime
+    except OSError:
+        return _additional_holidays_cache or set()
+
+    if _additional_holidays_cache is not None and mtime == _additional_holidays_mtime:
+        return _additional_holidays_cache
+
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.error(
+            "Konnte config.json nicht lesen (%s) – additional_holidays wird ignoriert.", exc
+        )
+        return _additional_holidays_cache or set()
+
+    raw_list = data.get("additional_holidays", []) or []
+    parsed: set = set()
+    for item in raw_list:
+        try:
+            parsed.add(date.fromisoformat(str(item)[:10]))
+        except ValueError:
+            logger.warning(
+                "Ungültiges Datum in additional_holidays der config.json: %r – wird ignoriert.",
+                item,
+            )
+
+    _additional_holidays_cache = parsed
+    _additional_holidays_mtime = mtime
+    return parsed
+
+
+# ── Hilfsfunktionen ────────────────────────────────────────────────────────────
+def get_austrian_holidays(year: int) -> set:
+    """
+    Gibt alle österreichischen Feiertage (Wien = Gesamtösterreich) für ein
+    Jahr zurück, ERGÄNZT um die in config.json unter "additional_holidays"
+    hinterlegten zusätzlichen Feiertage (auf das angegebene Jahr gefiltert).
+
+    Da praktisch alle Arbeitstage-/Kapazitätsberechnungen der Anwendung
+    (Projekte, Planung, Abwesenheiten, Restaufwand/Liefertermin) über diese
+    Funktion bzw. working_days_in_range() laufen, wirkt sich ein Eintrag in
+    additional_holidays automatisch überall aus.
+    """
+    try:
+        official = set(holidays.Austria(subdiv="W", years=year).keys())
     except TypeError:
         # Alte API (< 0.11)
-        return set(holidays.Austria(prov="W", years=year).keys())  
+        official = set(holidays.Austria(prov="W", years=year).keys())
+
+    additional_for_year = {d for d in _load_additional_holidays() if d.year == year}
+    return official | additional_for_year
+
 
 def is_working_day(d: date, at_holidays: set) -> bool:
     """True wenn d ein Arbeitstag (Mo–Fr, kein Feiertag) ist."""
     return d.weekday() < 5 and d not in at_holidays  
 
 def working_days_in_range(start: date, end: date) -> List[date]:
-    """Alle Arbeitstage (Mo–Fr, kein österr. Feiertag) im geschlossenen Intervall [start, end]."""
+    """Alle Arbeitstage (Mo–Fr, kein österr. Feiertag / zusätzlicher Feiertag) im geschlossenen Intervall [start, end]."""
     years = set(range(start.year, end.year + 1))
     at_hols: set = set()
     for y in years:
@@ -55,8 +141,8 @@ def calculate_total_capacity(start: date, end: date,
                              active_only: bool = True) -> Dict:
     """
     Berechnet die Gesamtkapazität aller (aktiven) Mitarbeiter im Zeitraum [start, end].
-    Zieht Feiertage und Abwesenheiten ab. Doppelbelegungen (z.B. Urlaub am Feiertag)
-    werden dank Set-Operationen nicht mehrfach abgezogen.
+    Zieht Feiertage (inkl. additional_holidays) und Abwesenheiten ab. Doppelbelegungen
+    (z.B. Urlaub am Feiertag) werden dank Set-Operationen nicht mehrfach abgezogen.
     Zusätzlich werden Informationen über die Anzahl der Arbeitstage und Feiertage im Zeitraum zurückgegeben.
     """
     with get_cursor() as cur:
@@ -96,7 +182,8 @@ def calculate_total_capacity(start: date, end: date,
                 absent_days[ab["shortname"]].add(cur_d)
                 cur_d += timedelta(days=1)
 
-        # Arbeitstage im Zeitraum ermitteln (working_days_in_range filtert Sa/So und AT-Feiertage bereits raus!)
+        # Arbeitstage im Zeitraum ermitteln (working_days_in_range filtert Sa/So, AT-Feiertage
+        # und additional_holidays bereits raus!)
         # Diese Menge enthält bereits nur Arbeitstage, die keine Feiertage sind.
         work_days = set(working_days_in_range(start, end))  
 
@@ -199,7 +286,7 @@ def calculate_capacity_per_week(start: date, end: date,
                 absent_days[ab["shortname"]].add(cur_d)
                 cur_d += timedelta(days=1)
 
-        # Arbeitstage gruppiert nach KW
+        # Arbeitstage gruppiert nach KW (inkl. additional_holidays via get_austrian_holidays)
         years = set(range(start.year, end.year + 1))
         at_hols: set = set()
         for y in years:
