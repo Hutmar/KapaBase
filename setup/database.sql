@@ -35,7 +35,9 @@ CREATE TABLE staff (
 	hours_per_day numeric(5,2) not null,
 	remark varchar(500),
 	default_task_id int REFERENCES tasks(task_id) ON DELETE SET NULL;
-	is_active boolean default true
+	is_active boolean default true,
+	active_from date default null,
+	active_to data default null
 );
 
 CREATE TYPE roleType AS ENUM ('Developer', 'Tester', 'Other');
