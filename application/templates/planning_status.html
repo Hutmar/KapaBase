@@ -483,13 +483,14 @@ function renderMatrix() {
 
     const devs  = staff_roles.filter(r => r.role === 'Developer').sort((a,b) => a.shortname.localeCompare(b.shortname));
     const tests = staff_roles.filter(r => r.role === 'Tester').sort((a,b) => a.shortname.localeCompare(b.shortname));
-    const ordered = [...devs, ...tests];
+    const others = staff_roles.filter(r => r.role === 'Other' || r.role === 'other').sort((a,b) => a.shortname.localeCompare(b.shortname));
+	const ordered = [...devs, ...tests, ...others];
 
     let tbody = '';
     ordered.forEach(sr => {
         const name      = sr.shortname;
         const role      = sr.role;
-        const roleColor = role === 'Developer' ? '#4A90D9' : '#9B59B6';
+        const roleColor = role === 'Developer' ? '#4A90D9' : (role === 'Tester' ? '#9B59B6' : '#1ABC9C');
         const capData   = (capacity_by_staff || {})[name] || {};
         const staffPlan = (plannings[name]   || {});
         const staffAbs  = (absence_map[name] || {});
