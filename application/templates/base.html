@@ -284,13 +284,39 @@ function toast(msg, type='success') {
   setTimeout(() => { t.className = ''; }, 2800);
 }
 
+// Wandelt einen FastAPI/Pydantic-Fehler-"detail"-Wert in einen lesbaren
+// String um. FastAPI liefert bei Validierungsfehlern (422) KEINEN String,
+// sondern eine Liste von Objekten { loc, msg, type, ... } – ohne diese
+// Behandlung landet dabei über new Error(detail) nur "[object Object]"
+// im UI, weil String([{...}]) genau das ergibt.
+function formatApiErrorDetail(detail, fallback) {
+  if (detail == null) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map(d => {
+      if (typeof d === 'string') return d;
+      if (d && typeof d === 'object') {
+        const loc = Array.isArray(d.loc) ? d.loc.filter(p => p !== 'body').join('.') : '';
+        const msg = d.msg || JSON.stringify(d);
+        return loc ? `${loc}: ${msg}` : msg;
+      }
+      return String(d);
+    });
+    return parts.join('; ') || fallback;
+  }
+  if (typeof detail === 'object') {
+    return detail.msg || JSON.stringify(detail);
+  }
+  return String(detail);
+}
+
 async function api(method, url, body=null) {
   const opts = { method, headers: {'Content-Type': 'application/json'} };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
   if (!r.ok) {
     const err = await r.json().catch(() => ({detail: r.statusText}));
-    throw new Error(err.detail || r.statusText);
+    throw new Error(formatApiErrorDetail(err.detail, r.statusText));
   }
   if (r.status === 204) return null;
   return r.json();

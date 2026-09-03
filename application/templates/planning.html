@@ -682,6 +682,13 @@ if (!useCurrent && selectedStartWeek && planningData.weeks) {
         planningData.absence_map[staffName], planningData.weeks
       );
     }
+    if (planningData.inactive_map) {
+      for (const staffName in planningData.inactive_map) {
+        planningData.inactive_map[staffName] = filterByWeekKey(
+          planningData.inactive_map[staffName], planningData.weeks
+        );
+      }
+    }
   }
 }
 
@@ -796,7 +803,7 @@ return {
 function renderMatrix() {
 const { weeks, staff_roles, capacity_totals,
         capacity_by_staff, plannings, absence_map,
-        ist_kw_map } = planningData;
+        ist_kw_map, inactive_map } = planningData;
 
 const today    = new Date();
 const todayIso = getIsoWeek(today);
@@ -857,6 +864,7 @@ ordered.forEach(sr => {
   const capData   = (capacity_by_staff || {})[name] || {};
   const staffPlan = (plannings[name]   || {});
   const staffAbs  = (absence_map[name] || {});
+  const staffInactive = (inactive_map && inactive_map[name]) || {};
 
   let row = `<tr>
   <td class="staff-name">
@@ -888,6 +896,18 @@ ordered.forEach(sr => {
         return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth}" title="${label}">${label}</div>`;
       }).join('');
       row += `<td class="past-cell" title="Vergangene KW"><div class="cell-items-wrap">${chips}</div></td>`;
+      return;
+    }
+
+    // Mitarbeiter außerhalb seines aktiven Zeitraums (active_from/active_to):
+    // Zelle wird als "Inaktiv" dargestellt, keine Zuweisung möglich – auch
+    // wenn nur ein Teil der Woche betroffen ist (siehe inactive_map).
+    const inactiveInfo = staffInactive[wk];
+    if (inactiveInfo) {
+      row += `<td class="absent-cell" title="Mitarbeiter nicht durchgehend aktiv (${inactiveInfo.active_days}/${inactiveInfo.total_days} Arbeitstage aktiv)">
+        <span>Inaktiv</span>
+        <span style="display:block;font-size:9px;opacity:.7">${inactiveInfo.active_days}/${inactiveInfo.total_days} T.</span>
+      </td>`;
       return;
     }
 

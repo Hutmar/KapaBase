@@ -53,6 +53,33 @@ def _check_overlap(cur, shortname: str, absence_from: date,
             detail="Überschneidung mit bestehender Abwesenheit gefunden"
         )
 
+# ── Hilfsfunktion: Prüfung gegen den aktiven Zeitraum des Mitarbeiters ────────
+def _check_staff_active_window(cur, shortname: str, absence_from: date, absence_to: date):
+    """
+    Stellt sicher, dass eine Abwesenheit vollständig innerhalb des aktiven
+    Zeitraums (active_from/active_to) des Mitarbeiters liegt. Wirft 422,
+    falls ein Teil der Abwesenheit außerhalb dieses Zeitraums liegt. Sind
+    active_from/active_to NULL (unbegrenzt), findet keine Einschränkung statt.
+    """
+    cur.execute("SELECT active_from, active_to FROM staff WHERE shortname = %s", (shortname,))
+    row = cur.fetchone()
+    if not row:
+        return
+    active_from = row["active_from"]
+    active_to   = row["active_to"]
+    if active_from is not None and absence_from < active_from:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Mitarbeiter ist erst ab {active_from} aktiv – Abwesenheit außerhalb "
+                   f"des aktiven Zeitraums ist nicht möglich."
+        )
+    if active_to is not None and absence_to > active_to:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Mitarbeiter ist nur bis {active_to} aktiv – Abwesenheit außerhalb "
+                   f"des aktiven Zeitraums ist nicht möglich."
+        )
+
 # ── Hilfsfunktion: Planungen entfernen, die durch eine Abwesenheit auf 0h fallen ──
 def _delete_plannings_reduced_to_zero(cur, shortname: str,
                                       absence_from: date, absence_to: date) -> int:
@@ -195,6 +222,25 @@ def list_absences(shortname: Optional[str] = None, fiscal_year_only: bool = Fals
 
     return rows
 
+@router.get("/today")
+def list_absences_today():
+    """
+    Alle Mitarbeiter, die am heutigen Tag abwesend sind
+    (absence_from <= heute <= absence_to). Wird auf der Abwesenheiten-Seite
+    beim Laden für ein Hinweisbanner ("Heute abwesend: ...") verwendet.
+    """
+    today = date.today()
+    with get_cursor() as cur:
+        cur.execute("""
+            SELECT shortname, absence_from, absence_to, absence_type
+            FROM absence
+            WHERE absence_from <= %s AND absence_to >= %s
+            ORDER BY shortname
+        """, (today, today))
+        rows = [dict(r) for r in cur.fetchall()]
+
+    return {"day": str(today), "absences": rows}
+
 @router.get("/summary", response_model=List[Dict[str, Any]])
 def get_absence_summary(shortname: Optional[str] = None, fiscal_year_only: bool = False):
     """
@@ -292,15 +338,20 @@ def list_teamdays():
 def create_teamday(data: TeamdayCreate):
     """
     Legt einen Teamtag an: Für alle aktiven Mitarbeiter, die an diesem Tag
-    noch KEINE Abwesenheit eingetragen haben, wird eine neue Abwesenheit vom
-    Typ 'Teamday' für genau diesen einen Tag angelegt. Mitarbeiter mit
-    bestehender Abwesenheit an diesem Tag werden übersprungen.
+    noch KEINE Abwesenheit eingetragen haben UND an diesem Tag innerhalb
+    ihres aktiven Zeitraums (active_from/active_to) sind, wird eine neue
+    Abwesenheit vom Typ 'Teamday' für genau diesen einen Tag angelegt.
+    Mitarbeiter mit bestehender Abwesenheit an diesem Tag werden übersprungen.
     """
     day = data.day
 
     with get_cursor(commit=True) as cur:
-        cur.execute("SELECT shortname FROM staff WHERE is_active = TRUE")
-        staff_list = [r["shortname"] for r in cur.fetchall()]
+        cur.execute("SELECT shortname, active_from, active_to FROM staff WHERE is_active = TRUE")
+        staff_list = [
+            r["shortname"] for r in cur.fetchall()
+            if (r["active_from"] is None or r["active_from"] <= day)
+            and (r["active_to"]   is None or r["active_to"]   >= day)
+        ]
 
         cur.execute("""
             SELECT DISTINCT shortname FROM absence
@@ -356,6 +407,7 @@ def create_absence(data: AbsenceCreate):
 
     with get_cursor(commit=True) as cur:
         _check_overlap(cur, data.shortname, data.absence_from, data.absence_to)
+        _check_staff_active_window(cur, data.shortname, data.absence_from, data.absence_to)
         cur.execute("""
             INSERT INTO absence (shortname, absence_from, absence_to, absence_type)
             VALUES (%s, %s, %s, %s)
@@ -395,6 +447,7 @@ def update_absence(absence_id: int, data: AbsenceUpdate):
 
         _check_overlap(cur, existing["shortname"], new_from, new_to,
                        exclude_id=absence_id)
+        _check_staff_active_window(cur, existing["shortname"], new_from, new_to)
 
         cur.execute("""
             UPDATE absence

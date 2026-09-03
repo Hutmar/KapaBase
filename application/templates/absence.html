@@ -14,6 +14,9 @@
         {% endif %}
     </div>
 
+    <!-- ── Hinweisbanner: heute abwesende Mitarbeiter ──────────────────────── -->
+    <div id="absent-today-banner" class="alert alert-info" style="display:none;margin-bottom:16px"></div>
+
     <!-- ── Seitenweiter Filter: Aktuelles Wirtschaftsjahr ──────────────────── -->
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
         <label class="flex-gap" style="color:var(--text2)">
@@ -191,6 +194,7 @@ async function init() {
     loadAbsences();
     loadAbsenceSummary();
     loadTeamdaysList();
+    loadAbsentToday();
 
     const isSummaryCollapsed = localStorage.getItem(SUMMARY_COLLAPSED_KEY) === 'true';
     if (isSummaryCollapsed) {
@@ -221,6 +225,46 @@ async function init() {
     document.getElementById('tf-day').addEventListener('change', function() {
         document.getElementById('tf-day-cw').textContent = `(KW ${getCalendarWeek(this.value)})`;
     });
+}
+
+// ── Hinweisbanner: heute abwesende Mitarbeiter ──────────────────────────────────
+async function loadAbsentToday() {
+    const banner = document.getElementById('absent-today-banner');
+    if (!banner) return;
+    try {
+        const data = await api('GET', '/api/absence/today');
+        const rows = data.absences || [];
+
+        if (rows.length === 0) {
+            banner.style.display = 'none';
+            banner.innerHTML = '';
+            return;
+        }
+
+        const todayDate  = new Date(data.day);
+        const todayLabel = isNaN(todayDate.getTime())
+            ? data.day
+            : todayDate.toLocaleDateString('de-AT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+
+        const chips = rows.map(r => `
+            <span style="display:inline-flex;align-items:center;gap:4px;margin:2px 10px 2px 0">
+                <strong>${r.shortname}</strong>
+                ${absenceTypeBadge(r.absence_type)}
+            </span>
+        `).join('');
+
+        banner.innerHTML = `
+            <div style="margin-bottom:6px">
+                <strong>Heute (${todayLabel}) abwesend – ${rows.length} Mitarbeiter:</strong>
+            </div>
+            <div>${chips}</div>
+        `;
+        banner.style.display = 'block';
+    } catch(e) {
+        // Bei Fehler Banner still ausblenden – der Rest der Seite soll
+        // trotzdem funktionieren.
+        banner.style.display = 'none';
+    }
 }
 
 // ── Wirtschaftsjahr-Zeitraum laden und anzeigen (nur für Label) ─────────────────
@@ -396,6 +440,7 @@ async function deleteTeamday(day) {
         loadTeamdaysList();
         loadAbsences();
         loadAbsenceSummary();
+        loadAbsentToday();
     } catch(e) {
         toast(e.message, 'error');
     }
@@ -554,6 +599,7 @@ async function saveAbsence() {
         loadAbsences();
         loadAbsenceSummary();
         loadTeamdaysList();
+        loadAbsentToday();
     } catch (e) {
         alertEl.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
     }
@@ -567,6 +613,7 @@ async function deleteAbsence(id) {
         loadAbsences();
         loadAbsenceSummary();
         loadTeamdaysList();
+        loadAbsentToday();
     } catch (e) {
         toast(e.detail || e.message, 'error');
     }
@@ -601,6 +648,7 @@ async function saveTeamday() {
         loadTeamdaysList();
         loadAbsences();
         loadAbsenceSummary();
+        loadAbsentToday();
     } catch(e) {
         alertEl.innerHTML = `<div class="alert alert-error">${e.detail || e.message}</div>`;
     }

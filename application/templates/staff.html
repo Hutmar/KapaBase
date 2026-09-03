@@ -63,6 +63,8 @@
                 <th>Bemerkung</th>
                 <th>Standard-Task</th>
                 <th>Aktiv</th>
+                <th>Aktiv von</th>
+                <th>Aktiv bis</th>
                 <th>Rollen</th>
                 <th style="width:100px"></th>
             </tr>
@@ -105,6 +107,23 @@
                     Wird in der Planung automatisch angezeigt, solange keine echte
                     Planung oder Abwesenheit für die jeweilige Woche vorliegt.
                     Wird NICHT als Planungseintrag gespeichert.
+                </div>
+            </div>
+        </div>
+        <div class="form-row" style="align-items:flex-start">
+            <label style="padding-top:6px">Aktiv von / bis</label>
+            <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input id="f-active-from" type="date" style="flex:1">
+                    <span class="text-dim" style="font-size:12px">bis</span>
+                    <input id="f-active-to" type="date" style="flex:1">
+                </div>
+                <div class="text-dim" style="font-size:11px">
+                    Optional. Wird eines der beiden Felder gesetzt, wird der Mitarbeiter
+                    automatisch als "Aktiv" markiert. Außerhalb dieses Zeitraums liegende
+                    Abwesenheiten und Planungen werden beim Speichern automatisch entfernt,
+                    und der Mitarbeiter wird in der Planung für diesen Zeitraum als
+                    "Inaktiv" angezeigt (keine Zuweisung möglich).
                 </div>
             </div>
         </div>
@@ -167,6 +186,8 @@
                 <td class="text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${s.remark||''}</td>
                 <td class="text-dim" style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${s.default_task_name||'–'}</td>
                 <td><input type="checkbox" ${s.is_active?'checked':''} onchange="toggleActive('${s.shortname}',this.checked)" style="width:auto"></td>
+                <td class="text-dim text-mono" style="font-size:11px">${s.active_from||'–'}</td>
+                <td class="text-dim text-mono" style="font-size:11px">${s.active_to||'–'}</td>
                 <td>${(s.roles||[]).map(r=>roleTag(r)).join(' ')}</td>
                 <td>
                     <div class="flex-gap">
@@ -197,6 +218,9 @@
     }
 
     document.getElementById('f-hpd').addEventListener('input', function() {
+        // Wird nur bei tatsächlicher Nutzereingabe im Feld ausgelöst (nicht
+        // beim programmatischen Vorbefüllen in openModal) – markiert, dass
+        // h/Tag in diesem Speichervorgang bewusst manuell bearbeitet wurde.
         this._manual = this.value.length > 0;
     });
 
@@ -207,6 +231,14 @@
         document.getElementById('modal-title').textContent = name ? `Mitarbeiter: ${name}` : 'Neuer Mitarbeiter';
         document.getElementById('f-shortname').disabled = !!name;
 
+        // "Manuell geändert"-Flag für h/Tag bei jedem Öffnen zurücksetzen –
+        // sowohl bei Neuanlage als auch beim Bearbeiten wird der Wert weiter
+        // unten programmatisch (vor-)befüllt, das ist KEINE manuelle
+        // Nutzereingabe und darf beim Speichern nicht als solche gewertet
+        // werden (sonst wird bei jedem Edit ohne h/Tag-Änderung fälschlich
+        // eine Bemerkung verlangt).
+        document.getElementById('f-hpd')._manual = false;
+
         if (name) {
             const response = await api('GET', '/api/staff/');
             const s = response.staff_members.find(r => r.shortname === name);
@@ -215,6 +247,8 @@
             document.getElementById('f-hpd').value = s.hours_per_day;
             document.getElementById('f-remark').value = s.remark||'';
             document.getElementById('f-default-task').value = s.default_task_id || '';
+            document.getElementById('f-active-from').value = s.active_from || '';
+            document.getElementById('f-active-to').value = s.active_to || '';
             document.getElementById('f-active').checked = s.is_active;
             document.getElementById('role-dev').checked  = (s.roles||[]).includes('Developer');
             document.getElementById('role-test').checked = (s.roles||[]).includes('Tester');
@@ -222,6 +256,8 @@
         } else {
             ['f-shortname','f-hpw','f-hpd','f-remark'].forEach(id=>document.getElementById(id).value='');
             document.getElementById('f-default-task').value = '';
+            document.getElementById('f-active-from').value = '';
+            document.getElementById('f-active-to').value = '';
             document.getElementById('f-active').checked = true;
             ['role-dev','role-test','role-other'].forEach(id=>document.getElementById(id).checked=false);
         }
@@ -240,27 +276,44 @@
         if (document.getElementById('role-test').checked) roles.push('Tester');
         if (document.getElementById('role-other').checked)roles.push('Other');
 
-        const hpdVal = document.getElementById('f-hpd').value;
+        const hpdField  = document.getElementById('f-hpd');
+        const hpdVal    = hpdField.value;
+        // hours_per_day wird NUR mitgesendet, wenn der Nutzer das Feld in
+        // diesem Speichervorgang tatsächlich manuell bearbeitet hat (siehe
+        // _manual-Flag). Ansonsten wird null gesendet, damit das Backend den
+        // bestehenden (bzw. bei geänderten Wochenstunden automatisch neu
+        // berechneten) Wert beibehält, statt bei jedem Speichern eine
+        // Bemerkungspflicht auszulösen.
+        const hpdManual = !!hpdField._manual;
         const defaultTaskVal = document.getElementById('f-default-task').value;
+        const activeFromVal  = document.getElementById('f-active-from').value;
+        const activeToVal    = document.getElementById('f-active-to').value;
         const payload = {
             shortname:      document.getElementById('f-shortname').value.trim(),
             hours_per_week: parseFloat(document.getElementById('f-hpw').value),
-            hours_per_day:  hpdVal ? parseFloat(hpdVal) : null,
+            hours_per_day:  (hpdManual && hpdVal) ? parseFloat(hpdVal) : null,
             remark:         document.getElementById('f-remark').value.trim()||null,
             default_task_id: defaultTaskVal ? parseInt(defaultTaskVal) : null,
+            active_from:    activeFromVal || null,
+            active_to:      activeToVal || null,
             is_active:      document.getElementById('f-active').checked,
             roles,
             force_delete_plannings: forceDelete
         };
 
         try {
+            let result;
             if (editingName) {
-                await api('PUT', `/api/staff/${editingName}`, payload);
+                result = await api('PUT', `/api/staff/${editingName}`, payload);
             } else {
-                await api('POST', '/api/staff/', payload);
+                result = await api('POST', '/api/staff/', payload);
             }
             closeModal();
-            toast('Gespeichert');
+            let msg = 'Gespeichert';
+            if (result && (result.deleted_absences_count > 0 || result.deleted_plannings_count > 0)) {
+                msg += ` – ${result.deleted_absences_count} Abwesenheit(en) und ${result.deleted_plannings_count} Planung(en) außerhalb des aktiven Zeitraums entfernt`;
+            }
+            toast(msg);
             loadStaff();
         } catch(e) {
             if (e.message && e.message.startsWith("PLANNING_CONFLICT:")) {

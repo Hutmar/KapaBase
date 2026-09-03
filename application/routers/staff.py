@@ -5,6 +5,7 @@ routers/staff.py – CRUD-Endpunkte für Mitarbeiterverwaltung (Tabelle: staff, 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from datetime import date
 from db import get_cursor
 from decimal import Decimal
 from psycopg2 import IntegrityError
@@ -21,15 +22,19 @@ class StaffCreate(BaseModel):
     is_active: bool = True
     roles: List[str] = []                 # z. B. ['Developer', 'Tester']
     default_task_id: Optional[int] = None # Standard-Task (nur Anzeige in Planung, nicht gespeichert)
+    active_from: Optional[date] = None    # Aktiv ab (optional, NULL = unbegrenzt in die Vergangenheit)
+    active_to: Optional[date] = None      # Aktiv bis (optional, NULL = unbegrenzt in die Zukunft)
 
 class StaffUpdate(BaseModel):
     hours_per_week: Optional[Decimal] = None
-    hours_per_day: Optional[Decimal] = None   # manuell gesetzt → remark Pflicht
+    hours_per_day: Optional[Decimal] = None   # NUR gesetzt, wenn der Nutzer h/Tag manuell geändert hat → remark Pflicht
     remark: Optional[str] = None
     is_active: Optional[bool] = None
     roles: Optional[List[str]] = None
     force_delete_plannings: Optional[bool] = False
     default_task_id: Optional[int] = None     # Standard-Task; wird immer gesetzt (auch null = entfernen)
+    active_from: Optional[date] = None        # Aktiv ab; wird immer gesetzt (auch null = entfernen)
+    active_to: Optional[date] = None          # Aktiv bis; wird immer gesetzt (auch null = entfernen)
 
 # ── Hilfsfunktion ──────────────────────────────────────────────────────────────
 
@@ -110,6 +115,50 @@ def _sync_roles(cur, shortname: str, target_roles: List[str], force_delete_plann
                 detail=f"Die Rolle '{role}' kann nicht entfernt werden, da sie noch an anderer Stelle verwendet wird."
             )
 
+
+def _cleanup_out_of_window_absences_and_plannings(cur, shortname: str,
+                                                   active_from: Optional[date],
+                                                   active_to: Optional[date]):
+    """
+    Entfernt Abwesenheiten und Planungseinträge des Mitarbeiters, die
+    (teilweise) außerhalb des (neuen) aktiven Zeitraums [active_from, active_to]
+    liegen. Wird aufgerufen, wenn active_from und/oder active_to nachträglich
+    gesetzt bzw. verändert werden.
+
+    NULL bei active_from/active_to bedeutet "unbegrenzt" in die jeweilige
+    Richtung – in dieser Richtung wird dann nichts bereinigt.
+
+    Gibt (anzahl_geloeschter_abwesenheiten, anzahl_geloeschter_planungen) zurück.
+    """
+    deleted_absences = 0
+    deleted_plannings = 0
+
+    if active_from is not None:
+        cur.execute(
+            "DELETE FROM absence WHERE shortname = %s AND absence_from < %s",
+            (shortname, active_from)
+        )
+        deleted_absences += cur.rowcount
+        cur.execute(
+            "DELETE FROM planning WHERE staff = %s AND start_date < %s",
+            (shortname, active_from)
+        )
+        deleted_plannings += cur.rowcount
+
+    if active_to is not None:
+        cur.execute(
+            "DELETE FROM absence WHERE shortname = %s AND absence_to > %s",
+            (shortname, active_to)
+        )
+        deleted_absences += cur.rowcount
+        cur.execute(
+            "DELETE FROM planning WHERE staff = %s AND end_date > %s",
+            (shortname, active_to)
+        )
+        deleted_plannings += cur.rowcount
+
+    return deleted_absences, deleted_plannings
+
 # ── Endpunkte ──────────────────────────────────────────────────────────────────
 
 @router.get("/")
@@ -119,6 +168,7 @@ def list_staff():
         cur.execute("""
             SELECT s.shortname, s.hours_per_week, s.hours_per_day,
             s.remark, s.is_active, s.default_task_id, dt.task_name AS default_task_name,
+            s.active_from, s.active_to,
             COALESCE(
                 json_agg(r.role ORDER BY r.role)
                 FILTER (WHERE r.role IS NOT NULL), '[]'
@@ -127,7 +177,8 @@ def list_staff():
             LEFT JOIN roles r ON r.shortname = s.shortname
             LEFT JOIN tasks dt ON dt.task_id = s.default_task_id
             GROUP BY s.shortname, s.hours_per_week, s.hours_per_day,
-            s.remark, s.is_active, s.default_task_id, dt.task_name
+            s.remark, s.is_active, s.default_task_id, dt.task_name,
+            s.active_from, s.active_to
             ORDER BY s.shortname
         """)
         staff_data = cur.fetchall()
@@ -159,12 +210,20 @@ def create_staff(data: StaffCreate):
         raise HTTPException(status_code=422,
                             detail="Remark ist Pflicht bei manuellem hours_per_day")
 
+    # Wird ein aktiver Zeitraum (active_from/active_to) angegeben, muss der
+    # Mitarbeiter zwingend als aktiv (is_active = TRUE) angelegt werden.
+    is_active = data.is_active
+    if data.active_from is not None or data.active_to is not None:
+        is_active = True
+
     with get_cursor(commit=True) as cur:
         cur.execute("""
-            INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active, default_task_id)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active,
+                                default_task_id, active_from, active_to)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """, (data.shortname, data.hours_per_week, hpd,
-              data.remark, data.is_active, data.default_task_id))
+              data.remark, is_active, data.default_task_id,
+              data.active_from, data.active_to))
         _sync_roles(cur, data.shortname, data.roles)
 
     return {"shortname": data.shortname}
@@ -192,7 +251,29 @@ def update_staff(shortname: str, data: StaffUpdate):
         # anderen optionalen Feldern nur bei "not None" zu überschreiben.
         new_default_task_id = data.default_task_id
 
-        # 1. Hat der User explizit Stunden pro Tag eingegeben?
+        # active_from/active_to: analog zu default_task_id sendet das
+        # Frontend diese Felder beim Speichern immer explizit mit (auch
+        # null, um sie zu entfernen) – daher werden sie direkt übernommen.
+        new_active_from = data.active_from
+        new_active_to   = data.active_to
+
+        # Wird ein aktiver Zeitraum gesetzt, muss is_active zwingend TRUE sein
+        # – unabhängig davon, was im Formular für "Aktiv" übergeben wurde.
+        if new_active_from is not None or new_active_to is not None:
+            new_active = True
+
+        # h/Tag (hours_per_day):
+        # - Das Frontend sendet hours_per_day NUR, wenn der Nutzer das Feld
+        #   in diesem Speichervorgang tatsächlich manuell bearbeitet hat.
+        #   In diesem Fall ist eine Bemerkung (remark) Pflicht.
+        # - Wurde h/Tag NICHT angefasst, aber h/Woche hat sich gegenüber dem
+        #   gespeicherten Wert tatsächlich geändert, wird h/Tag automatisch
+        #   neu berechnet (h/Woche / 5).
+        # - Wurde weder h/Tag noch (effektiv) h/Woche geändert, bleibt der
+        #   bestehende h/Tag-Wert unangetastet – so wird ein zuvor manuell
+        #   gesetzter Wert beim Speichern anderer Felder (z.B. Rollen,
+        #   Aktiv-Zeitraum) nicht versehentlich überschrieben und es wird
+        #   auch keine unnötige Remark-Pflicht ausgelöst.
         if data.hours_per_day is not None:
             if not new_remark:
                 raise HTTPException(
@@ -200,26 +281,39 @@ def update_staff(shortname: str, data: StaffUpdate):
                     detail="Remark ist Pflicht bei manuellem hours_per_day"
                 )
             new_hpd = data.hours_per_day
-
-        # 2. Wurden die Wochenstunden übergeben, aber KEIN Tagessatz? (-> Automatische Berechnung)
-        elif data.hours_per_week is not None:
+        elif data.hours_per_week is not None and data.hours_per_week != existing["hours_per_week"]:
             new_hpd = round(new_hpw / Decimal("5"), 2)
-
-        # 3. Nichts von beidem hat sich geändert
         else:
             new_hpd = existing["hours_per_day"]
 
         cur.execute("""
             UPDATE staff
             SET hours_per_week = %s, hours_per_day = %s,
-            remark = %s, is_active = %s, default_task_id = %s
+            remark = %s, is_active = %s, default_task_id = %s,
+            active_from = %s, active_to = %s
             WHERE shortname = %s
-        """, (new_hpw, new_hpd, new_remark, new_active, new_default_task_id, shortname))
+        """, (new_hpw, new_hpd, new_remark, new_active, new_default_task_id,
+              new_active_from, new_active_to, shortname))
 
         if data.roles is not None:
             _sync_roles(cur, shortname, data.roles, data.force_delete_plannings)
 
-        return {"shortname": shortname}
+        # Wenn ein aktiver Zeitraum (nachträglich) gesetzt wurde, müssen
+        # Abwesenheiten und Planungen, die außerhalb dieses Zeitraums liegen,
+        # automatisch entfernt werden.
+        deleted_absences_count = 0
+        deleted_plannings_count = 0
+        if new_active_from is not None or new_active_to is not None:
+            deleted_absences_count, deleted_plannings_count = \
+                _cleanup_out_of_window_absences_and_plannings(
+                    cur, shortname, new_active_from, new_active_to
+                )
+
+        return {
+            "shortname": shortname,
+            "deleted_absences_count":  deleted_absences_count,
+            "deleted_plannings_count": deleted_plannings_count,
+        }
 
 @router.delete("/{shortname}", status_code=204)
 def delete_staff(shortname: str):

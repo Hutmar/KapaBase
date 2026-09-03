@@ -29,15 +29,20 @@ create table tasks (
 	unique(color_hexcode)
 );
 
+-- HINWEIS: Ursprünglich enthielt diese Tabellendefinition zwei Fehler
+-- (";" statt "," nach default_task_id, sowie "active_to data" statt
+-- "active_to date"), wodurch die Tabelle so nie erstellt werden konnte.
+-- Beides wurde hier korrigiert. Die Felder active_from/active_to werden
+-- ab jetzt aktiv genutzt (Mitarbeiterverwaltung, Planung, Abwesenheiten).
 CREATE TABLE staff (
 	shortname varchar(100) not null primary key,
 	hours_per_week numeric(5,2) not null,
 	hours_per_day numeric(5,2) not null,
 	remark varchar(500),
-	default_task_id int REFERENCES tasks(task_id) ON DELETE SET NULL;
+	default_task_id int REFERENCES tasks(task_id) ON DELETE SET NULL,
 	is_active boolean default true,
 	active_from date default null,
-	active_to data default null
+	active_to date default null
 );
 
 CREATE TYPE roleType AS ENUM ('Developer', 'Tester', 'Other');

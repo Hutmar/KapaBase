@@ -111,19 +111,67 @@ def _is_majority_absent(shortname: str, week_key: str,
     absent = _absent_workdays_in_week(shortname, week_key, absences, at_hols)
     return absent >= total
 
+def _week_active_info(week_key: str, active_from: Optional[date], active_to: Optional[date]):
+    """
+    Gibt (aktive_arbeitstage, gesamt_arbeitstage) der KW zurück – bezogen auf
+    Mo–Fr (ohne Berücksichtigung von Feiertagen, analog zu
+    _total_workdays_in_week()). "aktive_arbeitstage" sind jene Tage, die
+    innerhalb von [active_from, active_to] liegen (NULL = unbegrenzt in die
+    jeweilige Richtung).
+    """
+    monday, friday = _week_bounds(week_key)
+    total = 0
+    active = 0
+    cur_d = monday
+    while cur_d <= friday:
+        if cur_d.weekday() < 5:
+            total += 1
+            if (active_from is None or cur_d >= active_from) and \
+               (active_to is None or cur_d <= active_to):
+                active += 1
+        cur_d += timedelta(days=1)
+    return active, total
+
+def _week_is_not_fully_active(active_from: Optional[date], active_to: Optional[date],
+                              week_key: str) -> bool:
+    """
+    True, wenn der Mitarbeiter in dieser Kalenderwoche NICHT an allen
+    Arbeitstagen aktiv ist (also entweder komplett oder teilweise außerhalb
+    von [active_from, active_to] liegt). Solche Wochen werden in der
+    Planungsmatrix als "Inaktiv" dargestellt, es kann in ihnen keine
+    Zuweisung erfolgen.
+    """
+    if active_from is None and active_to is None:
+        return False
+    active_days, total_days = _week_active_info(week_key, active_from, active_to)
+    return active_days < total_days
+
 def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
                                    range_start: date, range_end: date,
-                                   absences: list, at_hols: Set[date]) -> float:
+                                   absences: list, at_hols: Set[date],
+                                   active_from: Optional[date] = None,
+                                   active_to: Optional[date] = None) -> float:
     """
     Effektive Stunden des Mitarbeiters im angegebenen Datumsbereich.
+    Berücksichtigt optional einen aktiven Zeitraum [active_from, active_to]
+    (NULL = unbegrenzt in die jeweilige Richtung) – Tage außerhalb dieses
+    Zeitraums zählen nicht als Arbeitstage (der Mitarbeiter ist zu diesem
+    Zeitpunkt schlicht nicht beschäftigt).
     """
     if range_end < range_start:
         return 0.0
 
+    def _in_active_window(d: date) -> bool:
+        if active_from is not None and d < active_from:
+            return False
+        if active_to is not None and d > active_to:
+            return False
+        return True
+
     total_days = 0
     cur = range_start
     while cur <= range_end:
-        if cur.weekday() < 5 and cur not in at_hols:
+        if cur.weekday() < 5 and cur not in at_hols and _in_active_window(cur):
             total_days += 1
         cur += timedelta(days=1)
 
@@ -135,16 +183,19 @@ def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
         e = min(ab["absence_to"],   range_end)
         c = s
         while c <= e:
-            if c.weekday() < 5 and c not in at_hols:
+            if c.weekday() < 5 and c not in at_hols and _in_active_window(c):
                 absent_days.add(c)
             c += timedelta(days=1)
 
     return max(0.0, (total_days - len(absent_days)) * float(hours_per_day))
 
 def _effective_hours_in_week(shortname: str, hours_per_day: float,
-                             week_key: str, absences: list, at_hols: Set[date]) -> float:
+                             week_key: str, absences: list, at_hols: Set[date],
+                             active_from: Optional[date] = None,
+                             active_to: Optional[date] = None) -> float:
     monday, friday = _week_bounds(week_key)
-    return _effective_hours_in_date_range(shortname, hours_per_day, monday, friday, absences, at_hols)
+    return _effective_hours_in_date_range(shortname, hours_per_day, monday, friday,
+                                          absences, at_hols, active_from, active_to)
 
 def _build_at_hols(start: date, end: date) -> Set[date]:
     years = set(range(start.year, end.year + 1))
@@ -304,6 +355,7 @@ def get_planning(
 
         cur.execute("""
             SELECT s.shortname, s.hours_per_day, s.is_active,
+                   s.active_from, s.active_to,
                    r.role, r.role_id
             FROM staff s
             JOIN roles r ON r.shortname = s.shortname
@@ -311,9 +363,23 @@ def get_planning(
             AND s.is_active = TRUE
             ORDER BY r.role ASC, s.shortname ASC
         """)
-        staff_roles = cur.fetchall()
+        staff_roles_all = cur.fetchall()
+
+        # Mitarbeiter, die im GESAMTEN sichtbaren Zeitraum [start_date, end_date]
+        # nicht aktiv sind (active_to liegt vor Periodenbeginn ODER active_from
+        # liegt nach Periodenende), werden komplett aus der Liste entfernt.
+        staff_roles = [
+            r for r in staff_roles_all
+            if not (r["active_to"]   is not None and r["active_to"]   < start_date)
+            and not (r["active_from"] is not None and r["active_from"] > end_date)
+        ]
         shortnames = list({r["shortname"] for r in staff_roles})
         staff_hpd_map = {r["shortname"]: float(r["hours_per_day"]) for r in staff_roles}
+        # Aktiver Zeitraum je Mitarbeiter (für Kapazitätsberechnung &
+        # Zell-Darstellung "Inaktiv")
+        active_window_map = {
+            r["shortname"]: (r["active_from"], r["active_to"]) for r in staff_roles
+        }
 
         if shortnames:
             cur.execute("""
@@ -453,9 +519,10 @@ def get_planning(
         capacity_totals:   dict = {wk: 0.0 for wk in weeks}
 
         for name, hpd in staff_hpd_map.items():
+            af, at = active_window_map.get(name, (None, None))
             week_hours: dict = {}
             for wk in weeks:
-                h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols)
+                h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols, af, at)
                 week_hours[wk] = h
                 capacity_totals[wk] += h
             capacity_by_staff[name] = {
@@ -482,9 +549,12 @@ def get_planning(
         # Für Mitarbeiter mit hinterlegtem Standard-Task wird in aktuellen und
         # zukünftigen Kalenderwochen, in denen KEINE echte Planung vorhanden
         # ist, der Standard-Task eingeblendet – UNABHÄNGIG davon, ob in der
-        # Woche (Teil-)Abwesenheiten vorliegen. Einzige Ausnahme: es existiert
-        # bereits eine echte Planung (beliebige Rolle) für diese KW – dann
-        # wird der Standard-Task nicht angezeigt.
+        # Woche (Teil-)Abwesenheiten vorliegen. Ausnahmen:
+        # - es existiert bereits eine echte Planung (beliebige Rolle) für
+        #   diese KW,
+        # - es ist ein Projekt-/Task-Filter aktiv (dann macht der
+        #   Standard-Task-Platzhalter in der gefilterten Ansicht keinen Sinn),
+        # - der Mitarbeiter ist in dieser KW nicht (durchgehend) aktiv.
         # Es wird NICHTS in der Tabelle "planning" gespeichert.
         cur.execute("""
             SELECT s.shortname, s.default_task_id,
@@ -495,18 +565,23 @@ def get_planning(
         """)
         default_task_map = {r["shortname"]: dict(r) for r in cur.fetchall()}
 
-        if default_task_map:
+        if default_task_map and not has_any_filter:
             today_wk = _current_week_key()
             for sr in staff_roles:
                 name = sr["shortname"]
                 dt = default_task_map.get(name)
                 if not dt:
                     continue
+                af, at = active_window_map.get(name, (None, None))
                 for wk in weeks:
                     if wk < today_wk:
                         continue
                     staff_week_entries = plan_map.get(name, {}).get(wk, [])
                     if staff_week_entries:
+                        continue
+                    # Kein Standard-Task in Wochen, in denen der Mitarbeiter
+                    # nicht durchgehend aktiv ist.
+                    if _week_is_not_fully_active(af, at, wk):
                         continue
                     # Standard-Task nur anzeigen, wenn die effektive
                     # Wochenkapazität > 0 ist (bei einer vollen/mehrtägigen
@@ -659,11 +734,33 @@ def get_planning(
                     cur_d_ext += timedelta(days=7)
 
         for name, hpd in staff_hpd_map.items():
+            af, at = active_window_map.get(name, (None, None))
             for wk in weeks:
                 if wk not in capacity_by_staff[name]["week_hours"]:
-                    h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols)
+                    h = _effective_hours_in_week(name, hpd, wk, absences_list, at_hols, af, at)
                     capacity_by_staff[name]["week_hours"][wk] = h
                     capacity_totals[wk] = capacity_totals.get(wk, 0.0) + h
+
+        # ── "Inaktiv"-Zellen: Wochen, in denen der Mitarbeiter nicht an
+        # ALLEN Arbeitstagen aktiv ist (aufgrund active_from/active_to) ──────
+        inactive_map: dict = {}
+        for sr in staff_roles:
+            name = sr["shortname"]
+            af   = sr["active_from"]
+            at   = sr["active_to"]
+            if af is None and at is None:
+                continue
+            per_staff = {}
+            for wk in weeks:
+                active_days, total_days = _week_active_info(wk, af, at)
+                if active_days >= total_days:
+                    continue
+                per_staff[wk] = {
+                    "active_days": active_days,
+                    "total_days":  total_days,
+                }
+            if per_staff:
+                inactive_map[name] = per_staff
 
         return {
             "weeks":               weeks,
@@ -672,6 +769,7 @@ def get_planning(
             "capacity_by_staff":   capacity_by_staff,
             "plannings":           plan_map,
             "absence_map":         absence_map,
+            "inactive_map":        inactive_map,
             "available_projects":  [dict(p) for p in all_projects_filtered],
             "available_tasks":     [dict(t) for t in available_tasks],
             "filter_title_parts":  filter_title_parts,
@@ -699,11 +797,19 @@ def assign_planning(data: PlanningEntry):
         """, (data.staff, monday, friday))
         absences = [dict(r) for r in cur.fetchall()]
 
-        cur.execute("SELECT hours_per_day FROM staff WHERE shortname = %s", (data.staff,))
+        cur.execute("SELECT hours_per_day, active_from, active_to FROM staff WHERE shortname = %s", (data.staff,))
         staff_row = cur.fetchone()
         hours_per_day = float(staff_row["hours_per_day"]) if staff_row else 0.0
+        active_from = staff_row["active_from"] if staff_row else None
+        active_to   = staff_row["active_to"]   if staff_row else None
 
     at_hols = _build_at_hols(monday, friday)
+
+    if _week_is_not_fully_active(active_from, active_to, data.calendar_week):
+        raise HTTPException(409,
+            "Mitarbeiter ist in dieser Kalenderwoche nicht (durchgehend) aktiv "
+            "(siehe Aktiv-von/Aktiv-bis) – Zuweisung nicht möglich")
+
     if _is_majority_absent(data.staff, data.calendar_week, absences, at_hols):
         raise HTTPException(409,
             "Mitarbeiter ist in dieser Woche vollständig abwesend – Zuweisung nicht möglich")
@@ -753,7 +859,8 @@ def assign_planning(data: PlanningEntry):
             existing = same_role_rows[0]
 
             second_hours = _effective_hours_in_date_range(
-                data.staff, hours_per_day, thursday, friday, absences, at_hols
+                data.staff, hours_per_day, thursday, friday, absences, at_hols,
+                active_from, active_to
             )
             if second_hours <= 0:
                 raise HTTPException(409,
@@ -761,7 +868,8 @@ def assign_planning(data: PlanningEntry):
                     "verbleibenden Tagen (Do–Fr) vollständig abwesend (0 effektive Stunden)")
 
             first_hours = _effective_hours_in_date_range(
-                data.staff, hours_per_day, monday, wednesday, absences, at_hols
+                data.staff, hours_per_day, monday, wednesday, absences, at_hols,
+                active_from, active_to
             )
             if first_hours <= 0:
                 raise HTTPException(409,
