@@ -146,6 +146,35 @@ def _week_is_not_fully_active(active_from: Optional[date], active_to: Optional[d
     active_days, total_days = _week_active_info(week_key, active_from, active_to)
     return active_days < total_days
 
+def _week_fully_covered_by_range(week_key: str, range_from: Optional[date],
+                                 range_to: Optional[date]) -> bool:
+    """
+    True, wenn der Zeitraum [range_from, range_to] (NULL = unbegrenzt in die
+    jeweilige Richtung) die GESAMTE Kalenderwoche (Montag bis Freitag)
+    abdeckt. Wird für die Standard-Task-Auflösung (default_task-Tabelle)
+    verwendet: ein zeitlich begrenzter Standard-Task wird nur dann für eine
+    Woche angezeigt, wenn er diese Woche vollständig abdeckt.
+    """
+    monday, friday = _week_bounds(week_key)
+    if range_from is not None and range_from > monday:
+        return False
+    if range_to is not None and range_to < friday:
+        return False
+    return True
+
+def _resolve_default_task_for_week(entries: list, week_key: str) -> Optional[dict]:
+    """
+    Wählt aus den Standard-Task-Einträgen eines Mitarbeiters (aus der
+    default_task-Tabelle) denjenigen aus, der für die angegebene
+    Kalenderwoche gilt (siehe _week_fully_covered_by_range). Da sich die
+    Zeiträume laut Validierung in routers/default_task.py nicht überlappen
+    dürfen, kann es höchstens einen Treffer geben.
+    """
+    for entry in entries:
+        if _week_fully_covered_by_range(week_key, entry["active_from"], entry["active_to"]):
+            return entry
+    return None
+
 def _effective_hours_in_date_range(shortname: str, hours_per_day: float,
                                    range_start: date, range_end: date,
                                    absences: list, at_hols: Set[date],
@@ -394,6 +423,16 @@ def get_planning(
             absences = []
         absences_list = [dict(a) for a in absences]
 
+        # WICHTIG: ORDER BY pl.start_date ASC, pl.planning_id ASC ergänzt.
+        # Ohne explizites ORDER BY liefert PostgreSQL die Zeilen in
+        # unspezifizierter (physischer) Reihenfolge zurück. Beim Anlegen
+        # einer zweiten Zuweisung in derselben Woche wird der bestehende
+        # Eintrag per UPDATE auf Mo–Mi verkürzt (wodurch PostgreSQL intern
+        # eine neue Tupel-Version anlegt) und ein neuer Eintrag für Do–Fr
+        # per INSERT angelegt – ohne ORDER BY konnte die neue (spätere)
+        # Zuweisung dadurch manchmal VOR der bestehenden (früheren)
+        # Zuweisung zurückgegeben werden, was sich im Frontend als
+        # "zweite Zuweisung erscheint an erster Stelle" zeigte.
         sql_plannings = """
             SELECT pl.planning_id, pl.task_id, pl.project_id, pl.staff, pl.role_id,
                    pl.start_date, pl.end_date, pl.variant_id,
@@ -422,6 +461,8 @@ def get_planning(
         if combined_planning_filter_parts:
             sql_plannings += " AND (" + " OR ".join(combined_planning_filter_parts) + ")"
             params_plannings.extend(combined_planning_params)
+
+        sql_plannings += " ORDER BY pl.start_date ASC, pl.planning_id ASC"
 
         cur.execute(sql_plannings, params_plannings)
         plannings_raw = [dict(r) for r in cur.fetchall()]
@@ -546,31 +587,39 @@ def get_planning(
             plan_map.setdefault(pl["staff"], {}).setdefault(wk, []).append(entry)
 
         # ── Standard-Task automatisch einfügen (nur zur Anzeige!) ────────────
-        # Für Mitarbeiter mit hinterlegtem Standard-Task wird in aktuellen und
-        # zukünftigen Kalenderwochen, in denen KEINE echte Planung vorhanden
-        # ist, der Standard-Task eingeblendet – UNABHÄNGIG davon, ob in der
-        # Woche (Teil-)Abwesenheiten vorliegen. Ausnahmen:
+        # Standard-Tasks kommen aus der Tabelle "default_task" und können
+        # optional zeitlich begrenzt sein (active_from/active_to). Für
+        # Mitarbeiter mit hinterlegten Standard-Task-Einträgen wird in
+        # aktuellen und zukünftigen Kalenderwochen, in denen KEINE echte
+        # Planung vorhanden ist, der für diese Woche gültige Standard-Task
+        # eingeblendet – UNABHÄNGIG davon, ob in der Woche (Teil-)Abwesenheiten
+        # vorliegen. Ausnahmen:
         # - es existiert bereits eine echte Planung (beliebige Rolle) für
         #   diese KW,
         # - es ist ein Projekt-/Task-Filter aktiv (dann macht der
         #   Standard-Task-Platzhalter in der gefilterten Ansicht keinen Sinn),
-        # - der Mitarbeiter ist in dieser KW nicht (durchgehend) aktiv.
+        # - der Mitarbeiter ist in dieser KW nicht (durchgehend) aktiv,
+        # - kein Standard-Task-Eintrag deckt die gesamte Woche ab (z.B. bei
+        #   einem zeitlich begrenzten Eintrag, dessen Zeitraum die Woche nur
+        #   teilweise abdeckt).
         # Es wird NICHTS in der Tabelle "planning" gespeichert.
         cur.execute("""
-            SELECT s.shortname, s.default_task_id,
+            SELECT dt.default_task_id, dt.shortname, dt.task_id,
+                   dt.active_from, dt.active_to,
                    t.task_name, t.color_hexcode
-            FROM staff s
-            JOIN tasks t ON t.task_id = s.default_task_id
-            WHERE s.default_task_id IS NOT NULL
+            FROM default_task dt
+            JOIN tasks t ON t.task_id = dt.task_id
         """)
-        default_task_map = {r["shortname"]: dict(r) for r in cur.fetchall()}
+        default_tasks_by_staff: dict = {}
+        for r in cur.fetchall():
+            default_tasks_by_staff.setdefault(r["shortname"], []).append(dict(r))
 
-        if default_task_map and not has_any_filter:
+        if default_tasks_by_staff and not has_any_filter:
             today_wk = _current_week_key()
             for sr in staff_roles:
                 name = sr["shortname"]
-                dt = default_task_map.get(name)
-                if not dt:
+                entries = default_tasks_by_staff.get(name)
+                if not entries:
                     continue
                 af, at = active_window_map.get(name, (None, None))
                 for wk in weeks:
@@ -590,9 +639,12 @@ def get_planning(
                     week_hours = capacity_by_staff.get(name, {}).get("week_hours", {}).get(wk, 0.0)
                     if week_hours <= 0:
                         continue
+                    dt = _resolve_default_task_for_week(entries, wk)
+                    if not dt:
+                        continue
                     plan_map.setdefault(name, {}).setdefault(wk, []).append({
                         "planning_id":     None,
-                        "task_id":         dt["default_task_id"],
+                        "task_id":         dt["task_id"],
                         "project_id":      None,
                         "staff":           name,
                         "role_id":         sr["role_id"],

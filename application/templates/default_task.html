@@ -1,0 +1,256 @@
+<!-- templates/default_task.html -->
+{% extends "base.html" %}
+{% block title %}Standard-Tasks – Kapaverwaltung{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <h1>Standard-Task-Verwaltung</h1>
+        {% if has_edit_rights %}
+        <button class="btn btn-primary" onclick="openModal()">+ Neuer Standard-Task</button>
+        {% endif %}
+    </div>
+
+    <div class="text-dim" style="font-size:12px;margin-bottom:16px">
+        Ein Standard-Task wird in der Planungsmatrix automatisch angezeigt, solange für die
+        jeweilige Kalenderwoche keine echte Planung vorliegt. Pro Mitarbeiter ist entweder
+        <strong>ein</strong> Eintrag ohne Zeitbegrenzung möglich, <strong>oder</strong> mehrere
+        zeitlich begrenzte Einträge, deren Zeiträume sich nicht überschneiden dürfen.
+    </div>
+
+    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+        <label class="text-dim" style="white-space:nowrap">Mitarbeiter:</label>
+        <select id="filter-staff" style="max-width:200px" onchange="filterStaffChanged()">
+            <option value="">–</option>
+        </select>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Task</th>
+                <th>Projekt</th>
+                <th>Von</th>
+                <th>Bis</th>
+                <th style="width:80px"></th>
+            </tr>
+        </thead>
+        <tbody id="default-task-body"></tbody>
+    </table>
+</div>
+
+<!-- Modal: Neuer/Bearbeiten Standard-Task -->
+<div class="modal-backdrop" id="modal-backdrop">
+    <div class="modal">
+        <div class="modal-title" id="modal-title">Neuer Standard-Task</div>
+        <div id="modal-alert"></div>
+
+        <div class="form-row">
+            <label>Mitarbeiter *</label>
+            <select id="f-staff"></select>
+        </div>
+        <div class="form-row">
+            <label>Task *</label>
+            <select id="f-task"></select>
+        </div>
+        <div class="form-row" style="align-items:flex-start">
+            <label style="padding-top:6px">Von / Bis</label>
+            <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input id="f-from" type="date" style="flex:1">
+                    <span class="text-dim" style="font-size:12px">bis</span>
+                    <input id="f-to" type="date" style="flex:1">
+                </div>
+                <div class="text-dim" style="font-size:11px">
+                    Optional. Werden beide Felder leer gelassen, gilt der Standard-Task
+                    zeitlich unbegrenzt – das ist nur möglich, wenn für diesen Mitarbeiter
+                    sonst kein weiterer Standard-Task-Eintrag existiert.
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeModal()">Abbrechen</button>
+            <button class="btn btn-primary" onclick="saveDefaultTask()">Speichern</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let editingId = null;
+let allDefaultTasks = [];
+let allTasksForDropdown = [];
+const STAFF_FILTER_KEY = 'defaultTaskStaffFilter';
+const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
+
+async function init() {
+    const staffResponse = await api('GET', '/api/staff/');
+    const staffMembers = staffResponse.staff_members;
+
+    const sel = document.getElementById('filter-staff');
+    const fSel = document.getElementById('f-staff');
+
+    staffMembers.forEach(s => {
+        sel.innerHTML  += `<option value="${s.shortname}">${s.shortname}</option>`;
+        fSel.innerHTML += `<option value="${s.shortname}">${s.shortname}</option>`;
+    });
+
+    const savedFilter = localStorage.getItem(STAFF_FILTER_KEY);
+    if (savedFilter !== null) {
+        sel.value = savedFilter;
+    } else {
+        sel.value = '';
+    }
+
+    await loadTaskOptions();
+    loadDefaultTasks();
+}
+
+async function loadTaskOptions() {
+    try {
+        const data = await api('GET', '/api/tasks/');
+        allTasksForDropdown = data.tasks || [];
+        const sel = document.getElementById('f-task');
+        sel.innerHTML = allTasksForDropdown.map(t =>
+            `<option value="${t.task_id}">${t.task_name}${t.project_name ? ' (' + t.project_name + ')' : ''}</option>`
+        ).join('');
+    } catch(e) {
+        console.error('Fehler beim Laden der Tasks:', e);
+    }
+}
+
+function filterStaffChanged() {
+    const selectedStaff = document.getElementById('filter-staff').value;
+    localStorage.setItem(STAFF_FILTER_KEY, selectedStaff);
+    loadDefaultTasks();
+}
+
+function fmtDate(d) {
+    return d || '–';
+}
+
+async function loadDefaultTasks() {
+    const staff = document.getElementById('filter-staff').value;
+    const tbody = document.getElementById('default-task-body');
+    tbody.innerHTML = '';
+
+    if (!staff) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center">Bitte wählen Sie einen Mitarbeiter aus, um die Liste zu sehen.</td></tr>`;
+        return;
+    }
+
+    try {
+        allDefaultTasks = await api('GET', `/api/default_task/?shortname=${encodeURIComponent(staff)}`);
+    } catch(e) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center">Fehler beim Laden.</td></tr>`;
+        return;
+    }
+
+    if (allDefaultTasks.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center">Keine Standard-Task-Einträge für diesen Mitarbeiter.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = allDefaultTasks.map(dt => `
+        <tr>
+            <td>
+                <span class="color-dot" style="background:${dt.task_color||'#555'}"></span>
+                ${dt.task_name}
+            </td>
+            <td class="text-dim">${dt.project_name||'–'}</td>
+            <td class="text-mono">${fmtDate(dt.active_from)}</td>
+            <td class="text-mono">${fmtDate(dt.active_to)}</td>
+            <td>
+                <div class="flex-gap">
+                ${hasEditRights ? `
+                    <button class="btn btn-ghost btn-xs" onclick="openModal(${dt.default_task_id})">✎</button>
+                    <button class="btn btn-danger btn-xs" onclick="deleteDefaultTask(${dt.default_task_id})">✕</button>
+                ` : '<span class="text-dim" style="font-size:12px"></span>'}
+                </div>
+            </td>
+        </tr>
+    `).join('');
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────────
+function openModal(id = null) {
+    editingId = id;
+    document.getElementById('modal-alert').innerHTML = '';
+    document.getElementById('modal-title').textContent = id ? 'Standard-Task bearbeiten' : 'Neuer Standard-Task';
+
+    if (id) {
+        const dt = allDefaultTasks.find(x => x.default_task_id === id);
+        document.getElementById('f-staff').value = dt.shortname;
+        document.getElementById('f-staff').disabled = true;
+        document.getElementById('f-task').value = dt.task_id;
+        document.getElementById('f-from').value = dt.active_from || '';
+        document.getElementById('f-to').value = dt.active_to || '';
+    } else {
+        const currentStaffFilter = document.getElementById('filter-staff').value;
+        document.getElementById('f-staff').value = currentStaffFilter || '';
+        document.getElementById('f-staff').disabled = false;
+        document.getElementById('f-task').selectedIndex = 0;
+        document.getElementById('f-from').value = '';
+        document.getElementById('f-to').value = '';
+    }
+
+    document.getElementById('modal-backdrop').classList.add('open');
+}
+
+function closeModal() {
+    document.getElementById('modal-backdrop').classList.remove('open');
+}
+
+async function saveDefaultTask() {
+    const alertEl = document.getElementById('modal-alert');
+    const payload = {
+        shortname:   document.getElementById('f-staff').value,
+        task_id:     parseInt(document.getElementById('f-task').value),
+        active_from: document.getElementById('f-from').value || null,
+        active_to:   document.getElementById('f-to').value || null,
+    };
+
+    try {
+        if (editingId) {
+            // shortname bleibt beim Bearbeiten unverändert (Feld ist disabled)
+            await api('PUT', `/api/default_task/${editingId}`, {
+                task_id:     payload.task_id,
+                active_from: payload.active_from,
+                active_to:   payload.active_to,
+            });
+        } else {
+            await api('POST', '/api/default_task/', payload);
+        }
+        closeModal();
+        toast('Gespeichert');
+
+        // Mitarbeiter-Filter an den im Dialog gewählten Mitarbeiter anpassen,
+        // damit der Eintrag sichtbar wird.
+        const savedStaff = payload.shortname;
+        if (savedStaff && document.getElementById('filter-staff').value !== savedStaff) {
+            document.getElementById('filter-staff').value = savedStaff;
+            localStorage.setItem(STAFF_FILTER_KEY, savedStaff);
+        }
+
+        loadDefaultTasks();
+    } catch(e) {
+        alertEl.innerHTML = `<div class="alert alert-error">${e.message}</div>`;
+    }
+}
+
+async function deleteDefaultTask(id) {
+    if (!confirm('Standard-Task-Eintrag wirklich löschen?')) return;
+    try {
+        await api('DELETE', `/api/default_task/${id}`);
+        toast('Gelöscht');
+        loadDefaultTasks();
+    } catch(e) {
+        toast(e.message, 'error');
+    }
+}
+
+init();
+</script>
+{% endblock %}

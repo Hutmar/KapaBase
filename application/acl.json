@@ -5,6 +5,9 @@
   "tasks": {
     "edit": ["localhost"]
   },
+  "default_task": {
+    "edit": ["localhost"]
+  },
   "projects": {
     "edit": ["localhost"]
   },

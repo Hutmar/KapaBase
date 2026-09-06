@@ -18,6 +18,7 @@ from routers import sync_config
 from routers import notifications
 from routers import config
 from routers import milestones
+from routers import default_task
 from acl import has_permission
 from scheduler import start_scheduler, stop_scheduler
 
@@ -59,6 +60,7 @@ app.include_router(sync_config.router,         prefix="/api/sync/config",       
 app.include_router(notifications.router, prefix="/api/notifications",      tags=["Notifications"])
 app.include_router(config.router,     prefix="/api/config",           tags=["Config"])
 app.include_router(milestones.router, prefix="/api/milestones",       tags=["Milestones"])
+app.include_router(default_task.router, prefix="/api/default_task",   tags=["Default Task"])
 
 # ── Frontend HTML Seiten ───────────────────────────────────────────────────────
 
@@ -85,6 +87,11 @@ async def page_projects(request: Request):
 async def page_tasks(request: Request):
     editable = has_permission(request, "tasks", "edit")
     return templates.TemplateResponse("tasks.html", {"request": request, "has_edit_rights": editable})
+
+@app.get("/default_task", response_class=HTMLResponse)
+async def page_default_task(request: Request):
+    editable = has_permission(request, "default_task", "edit")
+    return templates.TemplateResponse("default_task.html", {"request": request, "has_edit_rights": editable})
 
 @app.get("/planning", response_class=HTMLResponse)
 async def page_planning(request: Request):

@@ -21,7 +21,6 @@ class StaffCreate(BaseModel):
     remark: Optional[str] = None
     is_active: bool = True
     roles: List[str] = []                 # z. B. ['Developer', 'Tester']
-    default_task_id: Optional[int] = None # Standard-Task (nur Anzeige in Planung, nicht gespeichert)
     active_from: Optional[date] = None    # Aktiv ab (optional, NULL = unbegrenzt in die Vergangenheit)
     active_to: Optional[date] = None      # Aktiv bis (optional, NULL = unbegrenzt in die Zukunft)
 
@@ -32,7 +31,6 @@ class StaffUpdate(BaseModel):
     is_active: Optional[bool] = None
     roles: Optional[List[str]] = None
     force_delete_plannings: Optional[bool] = False
-    default_task_id: Optional[int] = None     # Standard-Task; wird immer gesetzt (auch null = entfernen)
     active_from: Optional[date] = None        # Aktiv ab; wird immer gesetzt (auch null = entfernen)
     active_to: Optional[date] = None          # Aktiv bis; wird immer gesetzt (auch null = entfernen)
 
@@ -163,11 +161,15 @@ def _cleanup_out_of_window_absences_and_plannings(cur, shortname: str,
 
 @router.get("/")
 def list_staff():
-    """Alle Mitarbeiter mit ihren Rollen zurückgeben, inklusive summierter Stunden."""
+    """
+    Alle Mitarbeiter mit ihren Rollen zurückgeben, inklusive summierter Stunden
+    sowie Anzahl der Mitarbeiter (gesamt und je Rolle) für die Übersichtsboxen
+    auf der Mitarbeiterseite.
+    """
     with get_cursor() as cur:
         cur.execute("""
             SELECT s.shortname, s.hours_per_week, s.hours_per_day,
-            s.remark, s.is_active, s.default_task_id, dt.task_name AS default_task_name,
+            s.remark, s.is_active,
             s.active_from, s.active_to,
             COALESCE(
                 json_agg(r.role ORDER BY r.role)
@@ -175,10 +177,8 @@ def list_staff():
             ) AS roles
             FROM staff s
             LEFT JOIN roles r ON r.shortname = s.shortname
-            LEFT JOIN tasks dt ON dt.task_id = s.default_task_id
             GROUP BY s.shortname, s.hours_per_week, s.hours_per_day,
-            s.remark, s.is_active, s.default_task_id, dt.task_name,
-            s.active_from, s.active_to
+            s.remark, s.is_active, s.active_from, s.active_to
             ORDER BY s.shortname
         """)
         staff_data = cur.fetchall()
@@ -191,10 +191,20 @@ def list_staff():
 
         total_hpw_calculated = total_hpd_active * Decimal('5') # Teamwoche = Teamtag * 5
 
+        # Anzahl Mitarbeiter: gesamt sowie je Rolle (ein Mitarbeiter mit
+        # mehreren Rollen zählt in jeder seiner Rollen mit).
+        role_counts = {"Developer": 0, "Tester": 0, "Other": 0}
+        for s in staff_data:
+            for r in (s["roles"] or []):
+                if r in role_counts:
+                    role_counts[r] += 1
+
         return {
             "staff_members": staff_data,
             "total_hours_per_day": str(total_hpd_active.quantize(Decimal('0.01'))), # Auf 2 Dezimalstellen formatieren
-            "total_hours_per_week": str(total_hpw_calculated.quantize(Decimal('0.01'))) # Auf 2 Dezimalstellen formatieren
+            "total_hours_per_week": str(total_hpw_calculated.quantize(Decimal('0.01'))), # Auf 2 Dezimalstellen formatieren
+            "total_staff_count": len(staff_data),
+            "role_counts": role_counts,
         }
 
 @router.post("/", status_code=201)
@@ -219,10 +229,10 @@ def create_staff(data: StaffCreate):
     with get_cursor(commit=True) as cur:
         cur.execute("""
             INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active,
-                                default_task_id, active_from, active_to)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                                active_from, active_to)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (data.shortname, data.hours_per_week, hpd,
-              data.remark, is_active, data.default_task_id,
+              data.remark, is_active,
               data.active_from, data.active_to))
         _sync_roles(cur, data.shortname, data.roles)
 
@@ -245,15 +255,9 @@ def update_staff(shortname: str, data: StaffUpdate):
         new_active = data.is_active if data.is_active is not None \
             else existing["is_active"]
 
-        # Standard-Task: das Frontend sendet dieses Feld beim Speichern des
-        # Mitarbeiter-Formulars immer explizit mit (auch null, um ihn zu
-        # entfernen) – daher wird der Wert direkt übernommen, statt wie bei
-        # anderen optionalen Feldern nur bei "not None" zu überschreiben.
-        new_default_task_id = data.default_task_id
-
-        # active_from/active_to: analog zu default_task_id sendet das
-        # Frontend diese Felder beim Speichern immer explizit mit (auch
-        # null, um sie zu entfernen) – daher werden sie direkt übernommen.
+        # active_from/active_to: das Frontend sendet diese Felder beim
+        # Speichern immer explizit mit (auch null, um sie zu entfernen) –
+        # daher werden sie direkt übernommen.
         new_active_from = data.active_from
         new_active_to   = data.active_to
 
@@ -289,10 +293,10 @@ def update_staff(shortname: str, data: StaffUpdate):
         cur.execute("""
             UPDATE staff
             SET hours_per_week = %s, hours_per_day = %s,
-            remark = %s, is_active = %s, default_task_id = %s,
+            remark = %s, is_active = %s,
             active_from = %s, active_to = %s
             WHERE shortname = %s
-        """, (new_hpw, new_hpd, new_remark, new_active, new_default_task_id,
+        """, (new_hpw, new_hpd, new_remark, new_active,
               new_active_from, new_active_to, shortname))
 
         if data.roles is not None:

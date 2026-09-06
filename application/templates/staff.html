@@ -30,6 +30,12 @@
         color: var(--text);
         line-height: 1;
     }
+    .summary-subvalue {
+        font-size: 0.8em;
+        color: var(--text2);
+        margin-top: 8px;
+        white-space: nowrap;
+    }
     @media (max-width: 768px) {
         .summary-boxes-container { flex-direction: column; align-items: stretch; }
         .summary-box { min-width: unset; width: 100%; }
@@ -44,6 +50,11 @@
     </div>
 
     <div class="summary-boxes-container" style="display:flex; gap:20px; margin-bottom:20px; margin-top:20px; flex-wrap: wrap;">
+        <div class="summary-box">
+            <div class="summary-label">Anzahl Mitarbeiter</div>
+            <div class="summary-value" id="staff-total-count">0</div>
+            <div class="summary-subvalue" id="staff-role-breakdown">–</div>
+        </div>
         <div class="summary-box">
             <div class="summary-label">Stunden Teamtag</div>
             <div class="summary-value" id="team-daily-hours">0.00</div>
@@ -61,7 +72,6 @@
                 <th>h/Woche</th>
                 <th>h/Tag</th>
                 <th>Bemerkung</th>
-                <th>Standard-Task</th>
                 <th>Aktiv</th>
                 <th>Aktiv von</th>
                 <th>Aktiv bis</th>
@@ -96,19 +106,6 @@
         <div class="form-row">
             <label>Bemerkung</label>
             <input id="f-remark" placeholder="Pflicht bei manuellem h/Tag">
-        </div>
-        <div class="form-row" style="align-items:flex-start">
-            <label style="padding-top:6px">Standard-Task</label>
-            <div style="display:flex;flex-direction:column;gap:6px;flex:1">
-                <select id="f-default-task">
-                    <option value="">– keiner –</option>
-                </select>
-                <div class="text-dim" style="font-size:11px">
-                    Wird in der Planung automatisch angezeigt, solange keine echte
-                    Planung oder Abwesenheit für die jeweilige Woche vorliegt.
-                    Wird NICHT als Planungseintrag gespeichert.
-                </div>
-            </div>
         </div>
         <div class="form-row" style="align-items:flex-start">
             <label style="padding-top:6px">Aktiv von / bis</label>
@@ -156,22 +153,7 @@
 {% block scripts %}
 <script>
     let editingName = null;
-    let allTasksForDropdown = [];
     const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
-
-    async function loadTaskOptions() {
-        try {
-            const data = await api('GET', '/api/tasks/');
-            allTasksForDropdown = data.tasks || [];
-            const sel = document.getElementById('f-default-task');
-            sel.innerHTML = '<option value="">– keiner –</option>' +
-                allTasksForDropdown.map(t =>
-                    `<option value="${t.task_id}">${t.task_name}${t.project_name ? ' (' + t.project_name + ')' : ''}</option>`
-                ).join('');
-        } catch(e) {
-            console.error('Fehler beim Laden der Tasks:', e);
-        }
-    }
 
     async function loadStaff() {
         const response = await api('GET', '/api/staff/');
@@ -184,7 +166,6 @@
                 <td>${s.hours_per_week}</td>
                 <td>${s.hours_per_day}</td>
                 <td class="text-dim" style="max-width:200px;overflow:hidden;text-overflow:ellipsis">${s.remark||''}</td>
-                <td class="text-dim" style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis">${s.default_task_name||'–'}</td>
                 <td><input type="checkbox" ${s.is_active?'checked':''} onchange="toggleActive('${s.shortname}',this.checked)" style="width:auto"></td>
                 <td class="text-dim text-mono" style="font-size:11px">${s.active_from||'–'}</td>
                 <td class="text-dim text-mono" style="font-size:11px">${s.active_to||'–'}</td>
@@ -202,6 +183,11 @@
 
         document.getElementById('team-daily-hours').textContent = response.total_hours_per_day;
         document.getElementById('team-weekly-hours').textContent = response.total_hours_per_week;
+
+        document.getElementById('staff-total-count').textContent = response.total_staff_count;
+        const rc = response.role_counts || {};
+        document.getElementById('staff-role-breakdown').textContent =
+            `Dev: ${rc.Developer||0} · Test: ${rc.Tester||0} · Other: ${rc.Other||0}`;
     }
 
     function roleTag(r) {
@@ -246,7 +232,6 @@
             document.getElementById('f-hpw').value = s.hours_per_week;
             document.getElementById('f-hpd').value = s.hours_per_day;
             document.getElementById('f-remark').value = s.remark||'';
-            document.getElementById('f-default-task').value = s.default_task_id || '';
             document.getElementById('f-active-from').value = s.active_from || '';
             document.getElementById('f-active-to').value = s.active_to || '';
             document.getElementById('f-active').checked = s.is_active;
@@ -255,7 +240,6 @@
             document.getElementById('role-other').checked= (s.roles||[]).includes('Other');
         } else {
             ['f-shortname','f-hpw','f-hpd','f-remark'].forEach(id=>document.getElementById(id).value='');
-            document.getElementById('f-default-task').value = '';
             document.getElementById('f-active-from').value = '';
             document.getElementById('f-active-to').value = '';
             document.getElementById('f-active').checked = true;
@@ -285,7 +269,6 @@
         // berechneten) Wert beibehält, statt bei jedem Speichern eine
         // Bemerkungspflicht auszulösen.
         const hpdManual = !!hpdField._manual;
-        const defaultTaskVal = document.getElementById('f-default-task').value;
         const activeFromVal  = document.getElementById('f-active-from').value;
         const activeToVal    = document.getElementById('f-active-to').value;
         const payload = {
@@ -293,7 +276,6 @@
             hours_per_week: parseFloat(document.getElementById('f-hpw').value),
             hours_per_day:  (hpdManual && hpdVal) ? parseFloat(hpdVal) : null,
             remark:         document.getElementById('f-remark').value.trim()||null,
-            default_task_id: defaultTaskVal ? parseInt(defaultTaskVal) : null,
             active_from:    activeFromVal || null,
             active_to:      activeToVal || null,
             is_active:      document.getElementById('f-active').checked,
@@ -345,7 +327,6 @@
         } catch(e) { toast(e.message,'error'); }
     }
 
-    loadTaskOptions();
     loadStaff();
 </script>
 {% endblock %}

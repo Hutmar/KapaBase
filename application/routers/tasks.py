@@ -195,6 +195,7 @@ def delete_task(task_id: int, force: bool = False):
                 )
             cur.execute("DELETE FROM planning WHERE task_id = %s", (task_id,))
 
-        # Staff, die diesen Task als Standard-Task hinterlegt haben, werden
-        # durch ON DELETE SET NULL automatisch bereinigt (siehe database.sql).
+        # Standard-Task-Einträge (Tabelle default_task), die auf diesen Task
+        # verweisen, werden durch ON DELETE CASCADE automatisch mitgelöscht
+        # (siehe database.sql).
         cur.execute("DELETE FROM tasks WHERE task_id = %s", (task_id,))
