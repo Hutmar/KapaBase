@@ -1055,6 +1055,16 @@ if (openDropdownCell === `${staff}|${roleId}|${weekKey}`) {
 }
 closeDropdown();
 
+// Fokus von anderen Formularelementen (z.B. Wochen-/Varianten-Dropdowns)
+// wegnehmen. Hat ein <select> noch den Fokus von einer vorherigen
+// Interaktion, kann es sein, dass der Browser Tastatureingaben zuerst für
+// das native Typeahead dieses <select> verwendet, bevor sie unseren
+// (document-weiten) Such-Handler erreichen – das führte dazu, dass die
+// Eingabe im Zuweisungs-Dropdown "manchmal" ins Leere lief.
+if (document.activeElement && typeof document.activeElement.blur === 'function') {
+  document.activeElement.blur();
+}
+
 openDropdownCell = `${staff}|${roleId}|${weekKey}`;
 
 const { available_projects, available_tasks } = planningData;
@@ -1088,7 +1098,10 @@ dd.style.top  = (rect.bottom + window.scrollY) + 'px';
 dd.style.left = (rect.left   + window.scrollX) + 'px';
 dd.style.position = 'absolute';
 
-document.addEventListener('keydown', handleDropdownKeydown);
+// Listener in der Capture-Phase registrieren, damit unsere Suche VOR
+// eventuellem nativem Tastatur-Verhalten anderer Elemente (z.B. Typeahead
+// eines noch fokussierten <select>) zum Zug kommt.
+document.addEventListener('keydown', handleDropdownKeydown, true);
 highlightActiveDropdownItem();
 }
 
@@ -1128,7 +1141,7 @@ if (e.key === 'ArrowDown') {
 } else if (e.key === 'Escape') {
   e.preventDefault();
   closeDropdown();
-} else if (e.key.length === 1 || e.key === 'Backspace') {
+} else if ((e.key.length === 1 || e.key === 'Backspace') && !e.ctrlKey && !e.metaKey && !e.altKey) {
   if (e.key === 'Backspace') _dropdownSearchTerm = _dropdownSearchTerm.slice(0, -1);
   else _dropdownSearchTerm += e.key.toLowerCase();
   filterDropdownItems();
@@ -1137,13 +1150,29 @@ if (e.key === 'ArrowDown') {
 }
 
 function filterDropdownItems() {
-if (_dropdownSearchTerm === '') {
+const term = _dropdownSearchTerm;
+if (term === '') {
   _filteredDropdownItems = [..._dropdownItems];
 } else {
-  _filteredDropdownItems = _dropdownItems.filter(item =>
-    item.name.toLowerCase().includes(_dropdownSearchTerm) ||
-    (item.sub && item.sub.toLowerCase().includes(_dropdownSearchTerm))
+  // Zunächst alle Treffer sammeln (Name ODER Sub-Text, z.B. Projekt-/
+  // Kundenname), danach nach Relevanz sortieren. Ohne diese Sortierung
+  // landete bei häufig geteilten Sub-Texten (z.B. mehrere Tasks mit
+  // demselben übergeordneten Projektnamen "Wartungsthemen (...)") rein
+  // zufällig der erste Eintrag der Gesamtliste oben, unabhängig davon ob
+  // der eingegebene Suchbegriff tatsächlich im NAMEN vorkam – dadurch
+  // wirkte die Eingabe so, als würde sie "nichts tun".
+  const matches = _dropdownItems.filter(item =>
+    item.name.toLowerCase().includes(term) ||
+    (item.sub && item.sub.toLowerCase().includes(term))
   );
+  const rank = (item) => {
+    const name = item.name.toLowerCase();
+    if (name.startsWith(term)) return 0;   // Name beginnt mit Suchbegriff
+    if (name.includes(term))   return 1;   // Suchbegriff kommt im Namen vor
+    return 2;                              // nur über Sub-Text gefunden
+  };
+  matches.sort((a, b) => rank(a) - rank(b));
+  _filteredDropdownItems = matches;
 }
 _activeDropdownItemIndex = _filteredDropdownItems.length > 0 ? 0 : -1;
 renderDropdownItems(_filteredDropdownItems);
@@ -1176,7 +1205,7 @@ function closeDropdown() {
 const dd = document.getElementById('cell-dropdown');
 if (dd) dd.style.display = 'none';
 openDropdownCell = null;
-document.removeEventListener('keydown', handleDropdownKeydown);
+document.removeEventListener('keydown', handleDropdownKeydown, true);
 _dropdownSearchTerm = '';
 _activeDropdownItemIndex = -1;
 _filteredDropdownItems = [];
