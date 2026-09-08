@@ -318,6 +318,13 @@ vertical-align: middle;
 opacity: 0.85;
 }
 .status-jira-link:hover { opacity: 1; }
+.project-name-link {
+    color: inherit;
+    font-size: inherit;
+    text-decoration: none;
+    cursor: pointer;
+}
+.project-name-link:hover { text-decoration: underline; }
 .cell-dropdown {
 position: absolute;
 top: 100%;
@@ -488,7 +495,7 @@ Anzahl Projekte:
 <h2>Planungsstatus</h2>
 <div class="status-filter-row">
 <input type="text" id="project-status-search" class="status-search-box" style="width:220px"
-       placeholder="Suche Projektname oder Kunde..." oninput="filterProjectStatus()">
+       placeholder="Suche Projektname, Kunde oder Jira-ID..." oninput="filterProjectStatus()">
 <label class="flex-gap text-dim" style="font-size:12px;white-space:nowrap">
 <input type="checkbox" id="filter-unplanned" style="width:auto" onchange="filterProjectStatus()">
 Nicht vollständig verplant
@@ -1318,7 +1325,8 @@ let rowsToRender = _allProjectStatusRows;
 if (searchTerm) {
   rowsToRender = rowsToRender.filter(p =>
     p.project_name.toLowerCase().includes(searchTerm) ||
-    (p.customer && p.customer.toLowerCase().includes(searchTerm))
+    (p.customer && p.customer.toLowerCase().includes(searchTerm)) ||
+    (p.jira_id && p.jira_id.toLowerCase().includes(searchTerm))
   );
 }
 
@@ -1360,7 +1368,9 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
 return `<tr style="background:${bgColor}">
     <td>
       <span class="color-dot" style="background:${p.color_hexcode||'#555'}"></span>
-      <strong>${esc(p.project_name)}</strong>
+      <a href="/planning_status?project_ids=${p.project_id}" class="project-name-link" target="_blank" rel="noopener noreferrer">
+        <strong>${esc(p.project_name)}</strong>
+      </a>
       ${editIcon}
       ${jiraLinkHtml}
     </td>
