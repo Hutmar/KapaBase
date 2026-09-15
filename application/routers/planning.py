@@ -1189,6 +1189,127 @@ def project_planning_status(variant_id: Optional[int] = None):
 
     return result
 
+# ── GET /task_status ───────────────────────────────────────────────────────────
+
+@router.get("/task_status")
+def task_planning_status(
+    variant_id: Optional[int] = None,
+    start_week: Optional[str] = None,
+    end_week: Optional[str] = None,
+):
+    """
+    Aggregierte Planungsstunden je Task (analog zu /project_status, aber für
+    Tasks statt Projekte).
+
+    start_week/end_week (Format 'YYYY-WNN') bestimmen NUR, welche Tasks
+    überhaupt angezeigt werden – nämlich jene, die im angegebenen
+    Wochenbereich (i.d.R. der aktuell in der Planungsmatrix sichtbare
+    Bereich) mindestens einen Planungseintrag haben.
+
+    Die zurückgegebenen Stunden-Summen (planned_prev/planned_cur/planned_total)
+    beziehen sich für diese sichtbaren Tasks IMMER auf ALLE Planungseinträge
+    der Variante – unabhängig vom sichtbaren Zeitraum. Andernfalls wäre
+    "Geplant vor KW xx" bei aktivierter "Ab aktueller KW"-Ansicht immer 0,
+    weil vergangene Einträge dann gar nicht erst geladen würden.
+    """
+    with get_cursor() as cur:
+        resolved_variant_id = _resolve_variant_id(cur, variant_id)
+
+        range_start: Optional[date] = None
+        range_end:   Optional[date] = None
+        if start_week:
+            range_start, _ = _week_bounds(start_week)
+        if end_week:
+            _, range_end = _week_bounds(end_week)
+
+        # 1. Sichtbarkeits-Filter: welche Tasks haben im angegebenen
+        # Wochenbereich überhaupt Planungseinträge?
+        visible_sql = """
+            SELECT DISTINCT pl.task_id
+            FROM planning pl
+            WHERE pl.task_id IS NOT NULL
+            AND   pl.variant_id = %s
+        """
+        visible_params: list = [resolved_variant_id]
+        if range_start is not None:
+            visible_sql += " AND pl.end_date >= %s"
+            visible_params.append(range_start)
+        if range_end is not None:
+            visible_sql += " AND pl.start_date <= %s"
+            visible_params.append(range_end)
+
+        cur.execute(visible_sql, visible_params)
+        visible_task_ids = [r["task_id"] for r in cur.fetchall()]
+
+        if not visible_task_ids:
+            return []
+
+        # 2. Für die sichtbaren Tasks werden ALLE Planungseinträge der
+        # Variante geladen (unabhängig vom sichtbaren Zeitraum), damit
+        # "Geplant vor KW xx" korrekt bleibt, auch wenn die Matrix z.B. per
+        # "Ab aktueller KW" nur zukünftige Wochen anzeigt.
+        cur.execute("""
+            SELECT pl.task_id, pl.staff, pl.start_date, pl.end_date, s.hours_per_day,
+                   t.task_name, t.project_id, p.project_name
+            FROM planning pl
+            JOIN staff s ON s.shortname = pl.staff
+            JOIN tasks t ON t.task_id   = pl.task_id
+            LEFT JOIN project p ON p.project_id = t.project_id
+            WHERE pl.task_id = ANY(%s)
+            AND   pl.variant_id = %s
+        """, (visible_task_ids, resolved_variant_id))
+        plan_rows = [dict(r) for r in cur.fetchall()]
+
+        if not plan_rows:
+            return []
+
+        pstaff = list({r["staff"] for r in plan_rows})
+        min_d  = min(r["start_date"] for r in plan_rows)
+        max_d  = max(r["end_date"]   for r in plan_rows)
+        cur.execute("""
+            SELECT shortname, absence_from, absence_to
+            FROM absence
+            WHERE shortname = ANY(%s)
+            AND absence_to >= %s AND absence_from <= %s
+        """, (pstaff, min_d, max_d))
+        absences = [dict(a) for a in cur.fetchall()]
+
+    at_hols = _build_at_hols(min_d, max_d)
+
+    today_iso         = date.today().isocalendar()
+    current_week_key  = f"{today_iso[0]}-W{today_iso[1]:02d}"
+
+    tasks_agg: dict = {}
+    for pr in plan_rows:
+        tid = pr["task_id"]
+        wk  = iso_week_key(pr["start_date"])
+
+        h = _effective_hours_in_date_range(
+            pr["staff"], float(pr["hours_per_day"]),
+            pr["start_date"], pr["end_date"],
+            absences, at_hols)
+
+        entry = tasks_agg.setdefault(tid, {
+            "task_id":      tid,
+            "task_name":    pr["task_name"],
+            "project_id":   pr["project_id"],
+            "project_name": pr["project_name"],
+            "planned_prev": 0.0,
+            "planned_cur":  0.0,
+        })
+
+        if wk < current_week_key:
+            entry["planned_prev"] += h
+        else:
+            entry["planned_cur"] += h
+
+    result = list(tasks_agg.values())
+    for r in result:
+        r["planned_total"] = r["planned_prev"] + r["planned_cur"]
+    result.sort(key=lambda x: (x["task_name"] or "").lower())
+
+    return result
+
 # ── GET /gantt ─────────────────────────────────────────────────────────────────
 
 @router.get("/gantt")

@@ -298,9 +298,12 @@ user-select: none;
 padding: 2px 0 8px 0;
 }
 .section-header:hover h2 { color: var(--accent); }
+.section-header:hover .section-subtitle { color: var(--accent); }
 .section-toggle { font-size: 11px; color: var(--text2); transition: transform 0.15s; }
 .section-toggle.collapsed { transform: rotate(-90deg); }
 .section-body { overflow: hidden; transition: max-height 0.2s ease; }
+.section-subtitle { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+.status-subsection { margin-top: 18px; }
 .proj-status-table td { padding: 6px 10px; font-size: 12px; }
 .status-pill {
 display: inline-block;
@@ -495,12 +498,19 @@ Anzahl Projekte:
 <h2>Planungsstatus</h2>
 <div class="status-filter-row">
 <input type="text" id="project-status-search" class="status-search-box" style="width:220px"
-       placeholder="Suche Projektname, Kunde oder Jira-ID..." oninput="filterProjectStatus()">
+       placeholder="Suche Projektname, Kunde, Task oder Jira-ID..." oninput="filterStatusTables()">
 <label class="flex-gap text-dim" style="font-size:12px;white-space:nowrap">
 <input type="checkbox" id="filter-unplanned" style="width:auto" onchange="filterProjectStatus()">
 Nicht vollständig verplant
 </label>
 </div>
+
+<!-- Projekte (einklappbar) -->
+<div class="section-header" onclick="toggleStatusSection('projects')">
+  <span class="section-subtitle">Projekte</span>
+  <span id="toggle-status-projects" class="section-toggle">▼</span>
+</div>
+<div id="status-projects-container">
 <div style="overflow-x:auto">
 <table class="proj-status-table" style="width:100%">
 <thead>
@@ -518,6 +528,29 @@ Nicht vollständig verplant
 </thead>
 <tbody id="proj-status-body"></tbody>
 </table>
+</div>
+</div>
+
+<!-- Tasks (einklappbar) -->
+<div class="section-header status-subsection" onclick="toggleStatusSection('tasks')">
+  <span class="section-subtitle">Tasks</span>
+  <span id="toggle-status-tasks" class="section-toggle">▼</span>
+</div>
+<div id="status-tasks-container">
+<div style="overflow-x:auto">
+<table class="proj-status-table" style="width:100%">
+<thead>
+<tr>
+<th>Task</th>
+<th>Projekt</th>
+<th id="task-status-th-prev">Geplant vor KW –</th>
+<th id="task-status-th-cur">Geplant ab KW –</th>
+<th>Geplant</th>
+</tr>
+</thead>
+<tbody id="task-status-body"></tbody>
+</table>
+</div>
 </div>
 </div>
 
@@ -568,8 +601,12 @@ let _filteredDropdownItems = [];
 let _dropdownSearchTerm = '';
 let _activeDropdownItemIndex = -1;
 let _allProjectStatusRows = [];
+let _allTaskStatusRows = [];
 let _allAvailableWeeksForDropdown = null;
 let jiraBaseUrl = '';
+
+const STATUS_PROJECTS_COLLAPSED_KEY = 'planningStatusProjectsCollapsed';
+const STATUS_TASKS_COLLAPSED_KEY    = 'planningStatusTasksCollapsed';
 
 // variant_id aus URL-Parameter lesen (optional)
 const urlParams = new URLSearchParams(window.location.search);
@@ -704,6 +741,7 @@ catch(e) { toast('Render-Fehler: ' + e.message, 'error'); console.error(e); retu
 
 renderDragSources();
 loadProjectStatus();
+loadTaskStatus();
 }
 
 function updateVariantBadge(variantInfo) {
@@ -775,7 +813,49 @@ if (toggleBtn && filterBox && headerWrap && bodyWrap) {
     toggleBtn.innerHTML = isCollapsed ? '<span class="icon">▶</span>' : '<span class="icon">▼</span>';
   });
 }
+
+applyStatusSectionState();
 });
+
+// ── Planungsstatus: Ein-/Ausklappen (persistent über localStorage) ─────────────
+function toggleStatusSection(section) {
+  const isProjects   = section === 'projects';
+  const containerId  = isProjects ? 'status-projects-container' : 'status-tasks-container';
+  const toggleId     = isProjects ? 'toggle-status-projects'     : 'toggle-status-tasks';
+  const storageKey   = isProjects ? STATUS_PROJECTS_COLLAPSED_KEY : STATUS_TASKS_COLLAPSED_KEY;
+
+  const container = document.getElementById(containerId);
+  const toggleEl  = document.getElementById(toggleId);
+  const isCollapsed = container.style.display === 'none';
+
+  if (isCollapsed) {
+    container.style.display = '';
+    toggleEl.textContent = '▼';
+    localStorage.setItem(storageKey, 'false');
+  } else {
+    container.style.display = 'none';
+    toggleEl.textContent = '►';
+    localStorage.setItem(storageKey, 'true');
+  }
+}
+
+function applyStatusSectionState() {
+  const projCollapsed = localStorage.getItem(STATUS_PROJECTS_COLLAPSED_KEY) === 'true';
+  const projContainer = document.getElementById('status-projects-container');
+  const projToggle     = document.getElementById('toggle-status-projects');
+  if (projContainer && projToggle) {
+    projContainer.style.display = projCollapsed ? 'none' : '';
+    projToggle.textContent = projCollapsed ? '►' : '▼';
+  }
+
+  const tasksCollapsed = localStorage.getItem(STATUS_TASKS_COLLAPSED_KEY) === 'true';
+  const tasksContainer = document.getElementById('status-tasks-container');
+  const tasksToggle     = document.getElementById('toggle-status-tasks');
+  if (tasksContainer && tasksToggle) {
+    tasksContainer.style.display = tasksCollapsed ? 'none' : '';
+    tasksToggle.textContent = tasksCollapsed ? '►' : '▼';
+  }
+}
 
 // ── ISO-Hilfsfunktionen ────────────────────────────────────────────────────────
 function weekMonday(weekKey) {
@@ -1401,6 +1481,72 @@ if (assignedProjectId !== null && !silent) {
     toast(`Projekt "${assignedProject.project_name}" ist jetzt nahezu abgedeckt!`, 'success');
   }
 }
+}
+
+// ── Task-Status ─────────────────────────────────────────────────────────────────
+async function loadTaskStatus() {
+  if (!planningData || !planningData.weeks || planningData.weeks.length === 0) {
+    _allTaskStatusRows = [];
+    renderTaskStatusHeaders();
+    filterTaskStatus();
+    return;
+  }
+  const startWeek = planningData.weeks[0];
+  const endWeek   = planningData.weeks[planningData.weeks.length - 1];
+  let url = `/api/planning/task_status?start_week=${encodeURIComponent(startWeek)}&end_week=${encodeURIComponent(endWeek)}`;
+  if (URL_VARIANT_ID !== null) url += `&variant_id=${URL_VARIANT_ID}`;
+  try {
+    _allTaskStatusRows = await api('GET', url);
+  } catch(e) {
+    _allTaskStatusRows = [];
+    toast('Fehler beim Laden des Task-Planungsstatus: ' + e.message, 'error');
+  }
+  renderTaskStatusHeaders();
+  filterTaskStatus();
+}
+
+function renderTaskStatusHeaders() {
+  const kwNum = getIsoWeek(new Date()).week;
+  const prevTh = document.getElementById('task-status-th-prev');
+  const curTh  = document.getElementById('task-status-th-cur');
+  if (prevTh) prevTh.textContent = `Geplant vor KW ${kwNum}`;
+  if (curTh)  curTh.textContent  = `Geplant ab KW ${kwNum}`;
+}
+
+function filterTaskStatus() {
+  const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
+  let rows = _allTaskStatusRows;
+
+  if (searchTerm) {
+    rows = rows.filter(t =>
+      (t.task_name && t.task_name.toLowerCase().includes(searchTerm)) ||
+      (t.project_name && t.project_name.toLowerCase().includes(searchTerm))
+    );
+  }
+
+  const body = document.getElementById('task-status-body');
+  if (!body) return;
+
+  if (rows.length === 0) {
+    body.innerHTML = `<tr><td colspan="5" class="text-dim" style="text-align:center">Keine Tasks im sichtbaren Zeitraum gefunden.</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = rows.map(t => `
+    <tr>
+      <td><strong>${esc(t.task_name || '–')}</strong></td>
+      <td class="text-dim">${esc(t.project_name || '–')}</td>
+      <td class="text-mono">${Math.round(t.planned_prev)}h</td>
+      <td class="text-mono">${Math.round(t.planned_cur)}h</td>
+      <td class="text-mono">${Math.round(t.planned_total)}h</td>
+    </tr>
+  `).join('');
+}
+
+// Sucheingabe im Planungsstatus wirkt auf BEIDE Tabellen (Projekte & Tasks)
+function filterStatusTables() {
+  filterProjectStatus();
+  filterTaskStatus();
 }
 
 // ── Hilfsfunktionen ────────────────────────────────────────────────────────────
