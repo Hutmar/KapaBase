@@ -1534,7 +1534,12 @@ function filterTaskStatus() {
 
   body.innerHTML = rows.map(t => `
     <tr>
-      <td><strong>${esc(t.task_name || '–')}</strong></td>
+      <td>
+        <span class="color-dot" style="background:${t.task_color||'#555'}"></span>
+        <a href="/planning_status?task_ids=${t.task_id}" class="project-name-link" target="_blank" rel="noopener noreferrer">
+          <strong>${esc(t.task_name || '–')}</strong>
+        </a>
+      </td>
       <td class="text-dim">${esc(t.project_name || '–')}</td>
       <td class="text-mono">${Math.round(t.planned_prev)}h</td>
       <td class="text-mono">${Math.round(t.planned_cur)}h</td>

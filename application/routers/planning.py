@@ -1250,7 +1250,7 @@ def task_planning_status(
         # "Ab aktueller KW" nur zukünftige Wochen anzeigt.
         cur.execute("""
             SELECT pl.task_id, pl.staff, pl.start_date, pl.end_date, s.hours_per_day,
-                   t.task_name, t.project_id, p.project_name
+                   t.task_name, t.color_hexcode AS task_color, t.project_id, p.project_name
             FROM planning pl
             JOIN staff s ON s.shortname = pl.staff
             JOIN tasks t ON t.task_id   = pl.task_id
@@ -1292,6 +1292,7 @@ def task_planning_status(
         entry = tasks_agg.setdefault(tid, {
             "task_id":      tid,
             "task_name":    pr["task_name"],
+            "task_color":   pr["task_color"],
             "project_id":   pr["project_id"],
             "project_name": pr["project_name"],
             "planned_prev": 0.0,
