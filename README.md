@@ -1,10 +1,13 @@
 # KapaBase
 
+![KapaBase logo](application/static/logo.png)
+
 KapaBase ("Kapaverwaltung") is a capacity-planning and resource-management web application for software teams. It tracks staff, project assignments, absences, worked hours, planning variants, and delivery forecasts, and visualizes them in a Gantt chart and weekly planning matrices. The UI is German-language; this document is in English.
 
 ## Table of contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Installation](#installation)
@@ -30,6 +33,14 @@ KapaBase ("Kapaverwaltung") is a capacity-planning and resource-management web a
 - **Delivery forecasting** — burndown-based forecast chart for the next N projects.
 - **Jira synchronization** — pulls and pushes project data to/from Jira (Cloud or Server), with a diff/preview UI, per-item permanent ignore list, and optional automated email notifications.
 - **Access control** — simple per-page, per-action allow-list based on client IP/hostname (see [`acl.json`](#acljson--access-control)).
+
+## Screenshots
+
+**Planning matrix** — weekly resource assignment per staff member and role, with capacity and delivery-week summary rows:
+
+![Planning page screenshot](application/static/screenshots/planning.png)
+
+> Additional screenshots (Gantt, projects, absences, etc.) can be dropped into `application/static/screenshots/` and referenced here the same way.
 
 ## Tech stack
 
@@ -57,6 +68,8 @@ application/
 │   ├── sync.py, sync_config.py, config.py, notifications.py
 ├── templates/                 # Jinja2 templates (one per page) + base.html
 ├── static/                    # logo, favicon, images
+│   ├── logo.png                # displayed in the navbar and at the top of this README
+│   └── screenshots/             # README screenshots, e.g. planning.png
 ├── config.json                # application settings (see below)
 ├── config.json.example        # template for config.json
 ├── acl.json                   # access control list (see below)
