@@ -15,6 +15,7 @@ KapaBase ("Kapaverwaltung") is a capacity-planning and resource-management web a
   - [sync.json — Jira synchronization](#syncjson--jira-synchronization)
   - [sync_ignore.json — permanently ignored sync items](#sync_ignorejson--permanently-ignored-sync-items)
 - [Running the application](#running-the-application)
+  - [Running as a systemd service](#running-as-a-systemd-service)
 - [Module overview](#module-overview)
 - [Domain terminology (German UI)](#domain-terminology-german-ui)
 
@@ -68,13 +69,11 @@ setup/
 
 ## Installation
 
-### Prerequisites
+There are two supported ways to install the Python dependencies: a generic `pip`-based install (any platform), or the Debian/Ubuntu-specific `apt`-package install used in production (see `setup/install.txt`). Pick one.
 
-- Python 3.10+
-- PostgreSQL 13+
-- `pip`
+### Option A — generic (pip)
 
-### Steps
+**Prerequisites:** Python 3.10+, PostgreSQL 13+, `pip`
 
 1. **Clone the repository** and change into the `application/` directory.
 
@@ -88,16 +87,41 @@ setup/
 
    > Adjust to a `requirements.txt` if one exists in your checkout; the packages above are the ones imported by the application code.
 
-3. **Create the database** (see [Database setup](#database-setup)).
+3. Continue with [Database setup](#database-setup), then [Configuration](#configuration), then [Running the application](#running-the-application).
 
-4. **Set database connection environment variables** (optional — defaults shown):
+### Option B — Debian/Ubuntu (apt packages)
+
+This is the installation path used for production deployments of KapaBase (see `setup/install.txt`). Instead of `pip`, the Python dependencies are installed as Debian packages, and the app runs as a `systemd` service (see [Running as a systemd service](#running-as-a-systemd-service)).
+
+**Prerequisites:** a Debian/Ubuntu host with `sudo` access and PostgreSQL already installed (`postgresql` package).
+
+1. **Clone/deploy the repository**, e.g. to `/opt/kapabase`, so that `application/` (containing `main.py`) ends up directly under that directory — this path must match `WorkingDirectory` in the systemd unit (see below).
+
+2. **Install `uvicorn` and the required Python packages as Debian packages:**
 
    ```bash
-   export DB_HOST=localhost
-   export DB_PORT=5432
-   export DB_NAME=planning
-   export DB_USER=planning
-   export DB_PASS=planning
+   sudo apt update
+   sudo apt install uvicorn
+   sudo apt install python3-fastapi python3-uvicorn python3-psycopg2 python3-jinja2 python3-matplotlib python3-holidays
+   sudo apt install python3-apscheduler
+   ```
+
+   > `python3-matplotlib` is required for server-side chart rendering (`routers/charts.py`); the pip-based install in Option A pulls this in transitively via other packages, but on Debian it must be installed explicitly.
+
+3. **Create the PostgreSQL role and database:**
+
+   ```bash
+   # 1. Create the "planning" user with password "planning"
+   sudo -u postgres createuser planning --pwprompt
+
+   # 2. Create the "planning" database, owned by the "planning" user
+   sudo -u postgres createdb -O planning planning
+   ```
+
+4. **Load the schema** (run from the directory containing `database.sql`, e.g. `setup/`):
+
+   ```bash
+   psql -U planning -d planning -f database.sql
    ```
 
 5. **Create the configuration files** (see [Configuration](#configuration)):
@@ -105,7 +129,14 @@ setup/
    - `acl.json` (create manually — see below; if absent, all edit actions are denied by default)
    - `sync.json` (only needed if you use Jira synchronization)
 
-6. **Run the application** (see [Running the application](#running-the-application)).
+6. **Install and start the systemd service** (see [Running as a systemd service](#running-as-a-systemd-service)):
+
+   ```bash
+   sudo systemctl restart kapaBase.service
+   sudo journalctl -u kapaBase.service -n 100 --no-pager
+   ```
+
+   `journalctl` shows the last 100 log lines — use it to confirm the service started cleanly and to diagnose startup failures (e.g. missing packages, database connection errors, invalid `config.json`).
 
 ## Database setup
 
@@ -290,6 +321,65 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 The application serves both the API (`/api/...`) and the server-rendered frontend pages (`/`, `/staff`, `/absence`, `/projects`, `/tasks`, `/default_task`, `/planning`, `/planning_variants`, `/gantt`, `/worked_hours[/{project_id}]`, `/planning_status`) on the same port. A background scheduler (APScheduler) starts and stops with the application lifespan for scheduled Jira sync / notification jobs.
 
 For production, run behind a process manager and reverse proxy (e.g. `uvicorn` managed by `systemd` behind `nginx`), disable `--reload`, and ensure `acl.json` reflects the real network topology from which edit access should be permitted.
+
+### Running as a systemd service
+
+A ready-to-adapt unit file is provided at `setup/kapaBase.service`:
+
+```ini
+[Unit]
+Description=KapaBase
+After=network.target postgresql.service
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+User=username
+WorkingDirectory=/opt/kapabase
+ExecStart=/usr/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --log-config log_config.json
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+To install it:
+
+1. **Copy the unit file** into systemd's search path and adjust it for your environment:
+
+   ```bash
+   sudo cp setup/kapaBase.service /etc/systemd/system/kapaBase.service
+   sudo nano /etc/systemd/system/kapaBase.service
+   ```
+
+   At minimum, adjust:
+   - `User` — the Linux user the service should run as (must have read access to the application directory and, if you set DB credentials via environment variables, permission to see them).
+   - `WorkingDirectory` — must point at the `application/` directory (the one containing `main.py`, `config.json`, `acl.json`, etc.), e.g. `/opt/kapabase/application`.
+   - `ExecStart` — verify the path to `uvicorn` (`which uvicorn`, typically `/usr/bin/uvicorn` after the `apt install uvicorn` step). The `--log-config log_config.json` option is optional — omit it (or provide your own `log_config.json` in `WorkingDirectory`) if you don't need custom log formatting.
+   - Optionally add `Environment=DB_HOST=...`, `Environment=DB_PASS=...` etc. (one line per variable) if you don't want to rely on the defaults in `db.py`.
+
+2. **Reload systemd, enable, and start the service:**
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable kapaBase.service
+   sudo systemctl start kapaBase.service
+   ```
+
+3. **Check status and logs:**
+
+   ```bash
+   sudo systemctl status kapaBase.service
+   sudo journalctl -u kapaBase.service -n 100 --no-pager
+   ```
+
+4. **After deploying an update**, restart the service to pick up code changes:
+
+   ```bash
+   sudo systemctl restart kapaBase.service
+   sudo journalctl -u kapaBase.service -n 100 --no-pager
+   ```
+
+   Note: `config.json` (for `additional_holidays`) and Jira sync configuration are re-read without a restart (mtime-based cache invalidation / on-demand reads); a full reload of all of `config.json` can also be triggered via `POST /api/config/reload`. Code changes always require a service restart.
 
 ## Module overview
 
