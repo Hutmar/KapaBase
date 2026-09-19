@@ -7,6 +7,7 @@ sync.json / sync_engine.py) und stellt Endpunkte zum Abrufen bereit.
 Struktur von config.json:
 {
     "release": { "start_month": 5, "start_day": 1, "end_month": 3, "end_day": 31 },
+    "planning_buffer": { "percentage": 20 },
     "<weitere_gruppe>": { ... }
 }
 """
@@ -114,7 +115,34 @@ def get_current_fiscal_year_range() -> Tuple[date, date]:
         fy_end   = start_this_year - timedelta(days=1)
 
     return fy_start, fy_end
-    
+
+
+def get_planning_buffer_percentage() -> float:
+    """
+    Gibt den Prozentsatz des Planungspuffers zurück (config.json, Gruppe
+    "planning_buffer", Schlüssel "percentage").
+
+    Ein Projekt gilt erst dann als "vollständig verplant" (grüner Status in
+    der Projektstatus-Tabelle, Berechnung des Liefertermins Ist), wenn nicht
+    nur die tatsächlich offenen Stunden, sondern die um diesen Puffer erhöhten
+    Stunden verplant wurden.
+
+    Beispiel: Puffer = 20%, 100h Impl offen (Soll - Ist) → es müssen 120h
+    verplant sein (statt bisher 100h), damit "Offen Impl" auf ~0 sinkt und
+    das Projekt als abgedeckt gilt.
+
+    Default: 0 (kein Puffer → bisheriges Verhalten bleibt unverändert).
+    """
+    buf = app_config.get_group("planning_buffer")
+    try:
+        return float(buf.get("percentage", 0) or 0)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Ungültiger Wert für planning_buffer.percentage in config.json – "
+            "verwende 0 (kein Puffer)."
+        )
+        return 0.0
+
 # ── Endpunkte ────────────────────────────────────────────────────────────────
 
 @router.get("/")
@@ -134,7 +162,12 @@ def get_current_fiscal_year():
     """Start-/Enddatum des aktuell laufenden Wirtschaftsjahres."""
     start, end = get_current_fiscal_year_range()
     return {"start_date": str(start), "end_date": str(end)}
-    
+
+@router.get("/planning_buffer/current")
+def get_current_planning_buffer():
+    """Aktuell konfigurierter Planungspuffer in Prozent."""
+    return {"percentage": get_planning_buffer_percentage()}
+
 @router.get("/{group}")
 def get_config_group(group: str):
     data = app_config.get_group(group)

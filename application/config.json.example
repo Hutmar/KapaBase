@@ -9,10 +9,11 @@
     "start_month": 7,
     "start_day": 1
   },
-  {
+  "planning_buffer": {
+    "percentage": 20
+  },
   "additional_holidays": [
     "2026-12-24",
     "2026-12-31"
   ]
-  }
 }

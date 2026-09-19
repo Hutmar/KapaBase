@@ -19,6 +19,7 @@ from capacity import (
     get_austrian_holidays,
 )
 from routers.milestones import COLOR_SCHEMAS
+from routers.config import get_planning_buffer_percentage
 
 router = APIRouter()
 
@@ -232,6 +233,26 @@ def _build_at_hols(start: date, end: date) -> Set[date]:
     for y in years:
         hols |= get_austrian_holidays(y)
     return hols
+
+def _apply_planning_buffer(open_hours: float, buffer_pct: float) -> float:
+    """
+    Erhöht noch zu erledigende, aber noch nicht verplante Stunden um den
+    konfigurierten Planungspuffer (siehe config.json, Gruppe
+    "planning_buffer" / routers.config.get_planning_buffer_percentage()).
+
+    Damit ein Projekt als "vollständig verplant" gilt (grüner Status in der
+    Projektstatus-Tabelle, Berechnung von Liefertermin Ist), müssen nicht
+    nur die tatsächlich offenen Stunden, sondern die um diesen Puffer
+    erhöhten Stunden verplant werden.
+
+    Beispiel: 100h offen (Soll - Ist), Puffer 20% → es müssen 120h verplant
+    sein, damit "Offen Impl"/"Offen Test" auf ~0 sinkt.
+
+    Bereits geleistete (Ist-)Stunden werden NICHT gepuffert – der Puffer
+    wirkt ausschließlich auf den noch offenen (nicht bereits erledigten)
+    Anteil.
+    """
+    return open_hours * (1 + (buffer_pct or 0) / 100.0)
 
 def _next_week_key(base_date: date) -> str:
     next_week_date = base_date + timedelta(weeks=1)
@@ -746,13 +767,19 @@ def get_planning(
                 last_end_map_status[pid] = pr["end_date"]
 
         ist_kw_map: dict = {}
+        buffer_pct = get_planning_buffer_percentage()
 
         for pid, proj in projects_for_status.items():
             w  = worked_map.get(pid, {"worked_impl": 0, "worked_test": 0})
             pa = plan_agg_status.get(pid, {"Developer": 0.0, "Tester": 0.0})
 
-            remaining_impl = proj["plan_impl"] - float(w["worked_impl"]) - pa["Developer"]
-            remaining_test = proj["plan_test"] - float(w["worked_test"]) - pa["Tester"]
+            # Offene Stunden (Soll - Ist) werden um den Planungspuffer erhöht,
+            # bevor die bereits verplanten Stunden abgezogen werden – siehe
+            # _apply_planning_buffer() bzw. config.json "planning_buffer".
+            open_impl = proj["plan_impl"] - float(w["worked_impl"])
+            open_test = proj["plan_test"] - float(w["worked_test"])
+            remaining_impl = _apply_planning_buffer(open_impl, buffer_pct) - pa["Developer"]
+            remaining_test = _apply_planning_buffer(open_test, buffer_pct) - pa["Tester"]
             diff = remaining_impl + remaining_test
 
             if diff <= 0 or (0 < diff < 15):
@@ -1123,6 +1150,8 @@ def project_planning_status(variant_id: Optional[int] = None):
             if prev_end_date is None or pr["end_date"] > prev_end_date:
                 last_end_map[pid] = pr["end_date"]
 
+    buffer_pct = get_planning_buffer_percentage()
+
     result = []
     for p in projects:
         pid = p["project_id"]
@@ -1134,9 +1163,23 @@ def project_planning_status(variant_id: Optional[int] = None):
         done_impl = float(w["worked_impl"])
         done_test = float(w["worked_test"])
 
-        remaining_impl = p["plan_impl"] - done_impl - pc["Developer"]
-        remaining_test = p["plan_test"] - done_test - pc["Tester"]
+        # Offene Stunden (Soll - Ist) werden um den Planungspuffer erhöht,
+        # bevor die bereits verplanten Stunden abgezogen werden. Damit
+        # steigen "Offen Impl"/"Offen Test"/"Offen Gesamt" entsprechend an
+        # und ein Projekt gilt erst als abgedeckt (grün), wenn Impl/Test um
+        # den Puffer-Prozentsatz mehr verplant wurden als die tatsächlich
+        # offenen Stunden – siehe config.json "planning_buffer".
+        open_impl = p["plan_impl"] - done_impl
+        open_test = p["plan_test"] - done_test
+        remaining_impl = _apply_planning_buffer(open_impl, buffer_pct) - pc["Developer"]
+        remaining_test = _apply_planning_buffer(open_test, buffer_pct) - pc["Tester"]
         diff           = remaining_impl + remaining_test
+
+        # Nur der durch den Puffer hinzugekommene Stunden-Anteil (für die
+        # Anzeige "Puffer: Xh" im Tooltip von Offen Impl/Test/Gesamt im
+        # Frontend, siehe planning.html).
+        buffer_impl_hours = _apply_planning_buffer(open_impl, buffer_pct) - open_impl
+        buffer_test_hours = _apply_planning_buffer(open_test, buffer_pct) - open_test
 
         restaufwand = (
             p["target_hours"]
@@ -1177,6 +1220,9 @@ def project_planning_status(variant_id: Optional[int] = None):
             "remaining_test":  remaining_test,
             "remaining_hours": diff,
             "status_color":    status_color,
+            "buffer_impl":       buffer_impl_hours,
+            "buffer_test":       buffer_test_hours,
+            "buffer_percentage": buffer_pct,
             "soll_impl":         p["plan_impl"],
             "soll_test":         p["plan_test"],
             "done_impl":         done_impl,
@@ -1516,6 +1562,8 @@ def get_gantt(
             if prev_end_date is None or pr["end_date"] > prev_end_date:
                 last_end_map[pid] = pr["end_date"]
 
+    buffer_pct = get_planning_buffer_percentage()
+
     result_projects = []
     for p in projects:
         pid = p["project_id"]
@@ -1525,8 +1573,15 @@ def get_gantt(
         done_impl = float(w["worked_impl"])
         done_test = float(w["worked_test"])
 
-        remaining_impl = p["plan_impl"] - done_impl - pc["Developer"]
-        remaining_test = p["plan_test"] - done_test - pc["Tester"]
+        # Wie bei /project_status: offene Stunden werden um den
+        # Planungspuffer erhöht, bevor die bereits verplanten Stunden
+        # abgezogen werden – damit "vollständig verplant" (is_complete) und
+        # Liefertermin Ist im Gantt konsistent mit der Projektstatus-Tabelle
+        # bleiben.
+        open_impl = p["plan_impl"] - done_impl
+        open_test = p["plan_test"] - done_test
+        remaining_impl = _apply_planning_buffer(open_impl, buffer_pct) - pc["Developer"]
+        remaining_test = _apply_planning_buffer(open_test, buffer_pct) - pc["Tester"]
         diff           = remaining_impl + remaining_test
 
         # "vollständig verplant" = jene Projekte, für die auf der
