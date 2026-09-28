@@ -131,6 +131,16 @@ color: var(--text2);
 font-size: 10px;
 opacity: 0.6;
 }
+/* Korrekturmodus: vergangene Zellen sind (eingeschränkt) bearbeitbar */
+.past-cell.correctable {
+cursor: default !important;
+opacity: 0.92;
+}
+.past-cell.correctable.add-ready { cursor: copy !important; }
+.past-cell.correctable.add-ready:hover {
+outline: 2px solid var(--accent);
+outline-offset: -2px;
+}
 .partial-absent-cell {
 background: repeating-linear-gradient(
 -45deg,
@@ -458,6 +468,11 @@ Bis KW:
 
 <button class="btn btn-ghost btn-sm" onclick="loadPlanning()">↻ Aktualisieren</button>
 
+{% if has_edit_rights %}
+<button class="btn btn-ghost btn-sm" id="correction-btn" onclick="toggleCorrectionMode()"
+        title="Erlaubt einmalig, eine vergangene Planung zu löschen und stattdessen eine andere hinzuzufügen">✎ Planung korrigieren</button>
+{% endif %}
+
 <div style="margin-left: 20px; border-left: 1px solid var(--border); padding-left: 20px; display: flex; align-items: center; gap: 10px;">
 <label class="text-dim" style="font-size:12px; white-space: nowrap;">
 Anzahl Projekte:
@@ -479,6 +494,11 @@ Anzahl Projekte:
 </div>
 </div>
 </div>
+</div>
+
+<!-- Hinweisbanner Korrekturmodus -->
+<div id="correction-banner" class="alert alert-info" style="display:none;margin:0 0 12px 0">
+  <strong>Korrekturmodus:</strong> <span id="correction-banner-text"></span>
 </div>
 
 <div id="planning-header-wrap">
@@ -605,6 +625,15 @@ let _allTaskStatusRows = [];
 let _allAvailableWeeksForDropdown = null;
 let jiraBaseUrl = '';
 
+// ── Korrekturmodus ("Planung korrigieren") ─────────────────────────────────────
+// Erlaubt EINMALIG: eine vergangene Planung löschen (Schritt 1) und stattdessen
+// eine andere in einer vergangenen KW hinzufügen (Schritt 2). Danach endet der
+// Modus automatisch. Rein frontendseitig – die Endpunkte /assign und /remove
+// prüfen nicht auf vergangene Wochen.
+let correctionMode    = false;
+let correctionDeleted = false;   // Schritt 1 (Löschen) bereits erledigt
+let _prevUseCurrentWeek = null;  // vorheriger Zustand von "Ab aktueller KW"
+
 const STATUS_PROJECTS_COLLAPSED_KEY = 'planningStatusProjectsCollapsed';
 const STATUS_TASKS_COLLAPSED_KEY    = 'planningStatusTasksCollapsed';
 
@@ -662,6 +691,61 @@ function jiraIconLink(jiraId) {
       <path d="M7.68 8.505l-1.515 1.515 5.73 5.73-5.73 5.73 1.515 1.515h6.78l1.515-1.515-5.73-5.73 5.73-5.73-1.515-1.515H7.68z" fill="white" opacity="0.7"/>
     </svg>
   </a>`;
+}
+
+// ── Korrekturmodus: Steuerung ──────────────────────────────────────────────────
+function currentWeekKey() {
+  const i = getIsoWeek(new Date());
+  return `${i.year}-W${String(i.week).padStart(2,'0')}`;
+}
+
+function updateCorrectionUI() {
+  const btn    = document.getElementById('correction-btn');
+  const banner = document.getElementById('correction-banner');
+  const text   = document.getElementById('correction-banner-text');
+  if (btn) {
+    btn.classList.toggle('btn-primary', correctionMode);
+    btn.classList.toggle('btn-ghost', !correctionMode);
+    btn.textContent = correctionMode ? '✕ Korrektur beenden' : '✎ Planung korrigieren';
+  }
+  if (banner) banner.style.display = correctionMode ? '' : 'none';
+  if (text) {
+    text.textContent = correctionDeleted
+      ? 'Schritt 2/2 – Alte Planung ist gelöscht. Jetzt in einer vergangenen KW die neue Planung zuweisen (Klick auf freie Zelle bzw. "+"). Danach endet der Modus automatisch.'
+      : 'Schritt 1/2 – In einer vergangenen KW die falsche Planung über das "×" am Chip löschen. Dies ist einmalig möglich.';
+  }
+}
+
+async function toggleCorrectionMode() {
+  if (!hasEditRights) return;
+  if (correctionMode) {
+    endCorrectionMode(true);
+    return;
+  }
+  correctionMode    = true;
+  correctionDeleted = false;
+
+  // Vergangene KWs müssen sichtbar sein → "Ab aktueller KW" vorübergehend deaktivieren
+  const cb = document.getElementById('use-current-week');
+  _prevUseCurrentWeek = cb.checked;
+  cb.checked = false;
+
+  closeDropdown();
+  updateCorrectionUI();
+  await loadPlanning();
+}
+
+function endCorrectionMode(reload = true) {
+  correctionMode    = false;
+  correctionDeleted = false;
+  closeDropdown();
+
+  if (_prevUseCurrentWeek !== null) {
+    document.getElementById('use-current-week').checked = _prevUseCurrentWeek;
+    _prevUseCurrentWeek = null;
+  }
+  updateCorrectionUI();
+  if (reload) loadPlanning();
 }
 
 // ── Daten laden ────────────────────────────────────────────────────────────────
@@ -815,6 +899,7 @@ if (toggleBtn && filterBox && headerWrap && bodyWrap) {
 }
 
 applyStatusSectionState();
+updateCorrectionUI();
 });
 
 // ── Planungsstatus: Ein-/Ausklappen (persistent über localStorage) ─────────────
@@ -975,14 +1060,44 @@ ordered.forEach(sr => {
 
     if (isPast) {
       const chipMaxWidth = weekItems.length >= 2 ? '38px' : '82px';
+
+      // Korrekturmodus: Schritt 1 = Löschen erlaubt, Schritt 2 = Hinzufügen erlaubt
+      const canRemove = correctionMode && hasEditRights && !correctionDeleted;
+      const canAdd    = correctionMode && hasEditRights && correctionDeleted;
+
       const chips = weekItems.map(pl => {
         const label  = esc(pl.task_name || pl.project_name || '?');
         const color  = pl.task_color || pl.project_color || '#555';
         const txtCol = contrastColor(color);
         const outdated = pl.is_outdated ? ' outdated' : '';
-        return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth}" title="${label}">${label}</div>`;
+        const pid    = pl.project_id  != null ? pl.project_id  : 'null';
+        const tid    = pl.task_id     != null ? pl.task_id     : 'null';
+        const planId = pl.planning_id != null ? pl.planning_id : 'null';
+        const removeBtn = (canRemove && pl.planning_id != null)
+          ? `<button class="remove-btn" title="Diese Planung löschen (Korrektur)"
+              onclick="removePlanning(event,'${esc(name)}','${wk}',${pid},${tid},${planId})">×</button>`
+          : '';
+        return `<div class="planning-cell${outdated}" style="background:${color};color:${txtCol};max-width:${chipMaxWidth}" title="${label}">
+          <span style="overflow:hidden;text-overflow:ellipsis">${label}</span>
+          ${removeBtn}
+        </div>`;
       }).join('');
-      row += `<td class="past-cell" title="Vergangene KW"><div class="cell-items-wrap">${chips}</div></td>`;
+
+      const addBtn = (canAdd && weekItems.length === 1)
+        ? `<button class="add-second-btn" title="Zweites Projekt für diese Woche zuweisen"
+             onclick="event.stopPropagation(); cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')">+</button>`
+        : '';
+      const cellOnclick = (canAdd && weekItems.length === 0)
+        ? `onclick="cellClick(event,'${esc(name)}',${sr.role_id},'${wk}')"`
+        : '';
+      const corrCls = correctionMode
+        ? ' correctable' + (canAdd ? ' add-ready droptarget' : '')
+        : '';
+      const pastTitle = !correctionMode ? 'Vergangene KW'
+        : canRemove ? 'Vergangene KW – falsche Planung über × löschen'
+        : 'Vergangene KW – neue Planung zuweisen';
+
+      row += `<td class="past-cell${corrCls}" ${cellOnclick} title="${pastTitle}"><div class="cell-items-wrap">${chips}</div>${addBtn}</td>`;
       return;
     }
 
@@ -1321,6 +1436,14 @@ if (URL_VARIANT_ID !== null) body.variant_id = URL_VARIANT_ID;
 try {
   await api('POST', '/api/planning/assign', body);
   let message = `Zugewiesen: ${payload.name}`;
+
+  // Korrekturmodus: Zuweisung in vergangener KW nach erfolgter Löschung
+  // beendet den (einmaligen) Modus automatisch.
+  if (correctionMode && correctionDeleted && weekKey < currentWeekKey()) {
+    endCorrectionMode(false);   // Reload erfolgt unten per loadPlanning()
+    message += ' – Korrektur abgeschlossen';
+  }
+
   if (payload.type === 'project' && payload.id) {
     const updatedProjectStatuses = await loadProjectStatus(payload.id, { silent: true });
     const assignedProjectData = updatedProjectStatuses.find(p => p.project_id === payload.id);
@@ -1343,6 +1466,10 @@ try {
 async function removePlanning(e, staff, weekKey, projectId, taskId, planningId) {
 if (!hasEditRights) return;
 e.stopPropagation();
+
+// Korrekturmodus: nur eine einzige Löschung in einer vergangenen KW erlaubt
+const isCorrectionDelete = correctionMode && !correctionDeleted && weekKey < currentWeekKey();
+
 try {
   const body = {};
   // Bevorzugt: direkte Löschung per planning_id
@@ -1357,6 +1484,13 @@ try {
     if (taskId    !== 'null' && taskId    != null) body.task_id    = parseInt(taskId);
   }
   await api('DELETE', '/api/planning/remove', body);
+
+  if (isCorrectionDelete) {
+    correctionDeleted = true;
+    updateCorrectionUI();
+    toast('Alte Planung gelöscht – jetzt die neue Planung zuweisen (Schritt 2/2)');
+  }
+
   loadPlanning();
   if (projectId !== 'null' && projectId != null) {
     await loadProjectStatus(parseInt(projectId));
