@@ -283,6 +283,11 @@ max-width: 82px;
 height: 22px;
 margin: 1px;
 }
+/* Liefertermin IST nach Liefertermin SOLL → roter Rand */
+.delivery-chip.overdue {
+border: 2px solid var(--danger);
+padding: 0 4px;
+}
 .drag-source {
 display: flex;
 align-items: center;
@@ -520,8 +525,13 @@ Anzahl Projekte:
 <input type="text" id="project-status-search" class="status-search-box" style="width:220px"
        placeholder="Suche Projektname, Kunde, Task oder Jira-ID..." oninput="filterStatusTables()">
 <label class="flex-gap text-dim" style="font-size:12px;white-space:nowrap">
-<input type="checkbox" id="filter-unplanned" style="width:auto" onchange="filterProjectStatus()">
+<input type="checkbox" id="filter-unplanned" style="width:auto" onchange="onFilterUnplannedChange()">
 Nicht vollständig verplant
+</label>
+<label class="flex-gap text-dim" style="font-size:12px;white-space:nowrap"
+       title="Nur vollständig verplante Projekte, deren Liefertermin IST nach dem Liefertermin SOLL liegt">
+<input type="checkbox" id="filter-overdue" style="width:auto" onchange="onFilterOverdueChange()">
+Liefertermin überschritten
 </label>
 </div>
 
@@ -971,6 +981,19 @@ return {
 };
 }
 
+// ISO-Wochenschlüssel ('YYYY-WNN') eines 'YYYY-MM-DD'-Strings, rein UTC-basiert
+// (zeitzonenunabhängig). Wird für den Vergleich Liefertermin Soll ↔ Ist benötigt.
+function isoWeekKeyOfDateStr(dateStr) {
+if (!dateStr) return null;
+const [y, m, d] = String(dateStr).slice(0, 10).split('-').map(Number);
+if (!y || !m || !d) return null;
+const utc = new Date(Date.UTC(y, m - 1, d));
+utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+const week = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
+return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
 // ── Matrix rendern ─────────────────────────────────────────────────────────────
 function renderMatrix() {
 const { weeks, staff_roles, capacity_totals,
@@ -1200,6 +1223,13 @@ weeks.forEach(wk => {
 tbody += '</tr>';
 
 // ── Liefertermin-Zeile ─────────────────────────────────────────────────────
+// Liefertermin Soll (KW) je Projekt aus available_projects ableiten, um Chips
+// mit Liefertermin IST nach Liefertermin SOLL rot zu umranden.
+const dueKwByProject = {};
+(planningData.available_projects || []).forEach(p => {
+  dueKwByProject[p.project_id] = isoWeekKeyOfDateStr(p.due_date);
+});
+
 const istMap = ist_kw_map || {};
 tbody += '<tr class="delivery-row"><td class="staff-name" style="color:var(--text2);font-size:11px;font-weight:600;">Liefertermin</td>';
 weeks.forEach(wk => {
@@ -1210,7 +1240,11 @@ weeks.forEach(wk => {
     const chips = projs.map(p => {
       const color  = p.color_hexcode || '#555';
       const txtCol = contrastColor(color);
-      return `<div class="delivery-chip" style="background:${color};color:${txtCol}" title="${esc(p.project_name)}">
+      const dueKw  = dueKwByProject[p.project_id];
+      const overdue = !!(dueKw && wk > dueKw);
+      const dueLabel = dueKw ? ` (Liefertermin Soll: KW ${parseInt(dueKw.split('-W')[1])})` : '';
+      const tip = esc(p.project_name) + (overdue ? ' \u2013 Liefertermin überschritten' + dueLabel : '');
+      return `<div class="delivery-chip${overdue ? ' overdue' : ''}" style="background:${color};color:${txtCol}" title="${tip}">
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">${esc(p.project_name)}</span>
       </div>`;
     }).join('');
@@ -1531,9 +1565,33 @@ filterProjectStatus(assignedProjectId, !!opts.silent);
 return rows;
 }
 
+// Die beiden Filter-Checkboxen schließen sich gegenseitig aus: "Nicht vollständig
+// verplant" (kein Liefertermin Ist) und "Liefertermin überschritten" (nur
+// vollständig verplante Projekte) ergäben kombiniert immer eine leere Liste.
+function onFilterUnplannedChange() {
+  if (document.getElementById('filter-unplanned').checked) {
+    document.getElementById('filter-overdue').checked = false;
+  }
+  filterProjectStatus();
+}
+
+function onFilterOverdueChange() {
+  if (document.getElementById('filter-overdue').checked) {
+    document.getElementById('filter-unplanned').checked = false;
+  }
+  filterProjectStatus();
+}
+
+// Vollständig verplant UND Liefertermin Ist nach Liefertermin Soll
+function isDeliveryOverdue(p) {
+  const complete = p.status_color === 'green' || p.status_color === 'lightgreen';
+  return !!(complete && p.ist_kw && p.due_kw && p.ist_kw > p.due_kw);
+}
+
 function filterProjectStatus(assignedProjectId = null, silent = false) {
 const searchTerm = document.getElementById('project-status-search').value.toLowerCase();
 const onlyUnplanned = document.getElementById('filter-unplanned').checked;
+const onlyOverdue   = document.getElementById('filter-overdue').checked;
 let rowsToRender = _allProjectStatusRows;
 
 if (searchTerm) {
@@ -1553,6 +1611,12 @@ if (onlyUnplanned) {
   );
 }
 
+// "Liefertermin überschritten": nur vollständig verplante Projekte, deren
+// Liefertermin Ist nach dem Liefertermin Soll liegt.
+if (onlyOverdue) {
+  rowsToRender = rowsToRender.filter(isDeliveryOverdue);
+}
+
 const colorMap = {
   red:        ['#E74C3C', 'rgba(231,76,60,0.12)'],
   green:      ['#2ECC71', 'rgba(46,204,113,0.12)'],
@@ -1564,6 +1628,9 @@ document.getElementById('proj-status-body').innerHTML = rowsToRender.map(p => {
   const [txtColor, bgColor] = colorMap[p.status_color] || ['var(--text)', 'transparent'];
   const showIst    = p.status_color === 'green' || p.status_color === 'lightgreen';
   const istDiffers = showIst && p.ist_kw && p.due_kw && p.ist_kw !== p.due_kw;
+  // Ist vor Soll → grün, Ist nach Soll → orange, Ist = Soll → grau
+  const istEarly   = istDiffers && p.ist_kw < p.due_kw;
+  const istColor   = istEarly ? 'var(--accent2)' : (istDiffers ? 'var(--warn)' : 'var(--text2)');
 
   // Puffer (falls in config.json > 0 konfiguriert) wird als eigene Zeile
   // unterhalb von "Soll-Impl"/"Soll-Test" im jeweiligen Tooltip angezeigt.
@@ -1604,7 +1671,7 @@ return `<tr style="background:${bgColor}">
     <td class="text-mono">${Math.round(p.target_hours)}h</td>
     <td class="text-mono">${Math.round(p.restaufwand)}h</td>
     <td class="text-mono text-dim">${fmtKw(p.due_kw)}</td>
-    <td class="text-mono" style="color:${istDiffers?'var(--warn)':'var(--text2)'}">
+    <td class="text-mono" style="color:${istColor}">
       ${showIst ? fmtKw(p.ist_kw) : '–'}
     </td>
     <td class="text-mono" title="${esc(implTip)}" style="color:${p.remaining_impl>0?'var(--danger)':p.remaining_impl<0?'#7DCEA0':'var(--accent2)'};cursor:help">
