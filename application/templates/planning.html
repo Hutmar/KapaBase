@@ -905,8 +905,17 @@ if (toggleBtn && filterBox && headerWrap && bodyWrap) {
     bodyWrap.classList.toggle('matrix-collapsed');
     const isCollapsed = headerWrap.classList.contains('matrix-collapsed');
     toggleBtn.innerHTML = isCollapsed ? '<span class="icon">▶</span>' : '<span class="icon">▼</span>';
+    // Beim Wiedereinblenden die Spaltenbreiten neu abgleichen
+    if (!isCollapsed) syncHeaderColumns();
   });
 }
+
+// Webfonts (IBM Plex) können Textbreiten nach dem ersten Rendern ändern →
+// Header-Spalten danach erneut an den Body angleichen.
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => syncHeaderColumns());
+}
+window.addEventListener('load', () => syncHeaderColumns());
 
 applyStatusSectionState();
 updateCorrectionUI();
@@ -992,6 +1001,34 @@ utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
 const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
 const week = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
 return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+// ── Header-Spalten an Body-Spalten angleichen ─────────────────────────────────
+// Header und Body sind zwei getrennte Tabellen mit table-layout:auto. Wird eine
+// Body-Spalte durch ihren Inhalt (z.B. zwei Chips, Liefertermin-Chip, "Inaktiv")
+// breiter als 90px, kennt die Header-Tabelle das nicht → die KW-Beschriftungen
+// driften nach rechts hin aus der Spaltenmitte. Lösung: die tatsächlich
+// gerenderten Spaltenbreiten des Body messen und 1:1 auf den Header übertragen.
+// (Bewusst KEIN table-layout:fixed – das führte in dieser Dual-Table-Konstruktion
+// zu leeren Tabellen.)
+function syncHeaderColumns() {
+  const bodyTable   = document.getElementById('planning-body-table');
+  const headerTable = document.getElementById('planning-header-table');
+  if (!bodyTable || !headerTable) return;
+
+  const firstRow = bodyTable.querySelector('tbody tr');
+  if (!firstRow) return;
+
+  const widths = Array.from(firstRow.children).map(c => c.getBoundingClientRect().width);
+  const total  = bodyTable.getBoundingClientRect().width;
+  // Wenn die Matrix eingeklappt (display:none) ist, liefert die Messung 0 → abbrechen
+  if (!total || widths.some(w => !w)) return;
+
+  const oldCg = headerTable.querySelector('colgroup');
+  if (oldCg) oldCg.remove();
+  headerTable.insertAdjacentHTML('afterbegin',
+    `<colgroup>${widths.map(w => `<col style="width:${w}px;min-width:${w}px;max-width:${w}px">`).join('')}</colgroup>`);
+  headerTable.style.width = total + 'px';
 }
 
 // ── Matrix rendern ─────────────────────────────────────────────────────────────
@@ -1258,6 +1295,9 @@ const oldCgB = bodyTable.querySelector('colgroup');
 if (oldCgB) oldCgB.remove();
 bodyTable.insertAdjacentHTML('afterbegin', colgroupHtml);
 document.getElementById('planning-tbody').innerHTML = tbody;
+
+// Header-Spaltenbreiten an die tatsächlich gerenderten Body-Spalten angleichen
+syncHeaderColumns();
 
 const bodyWrap   = document.getElementById('planning-body-wrap');
 const headerWrap = document.getElementById('planning-header-wrap');

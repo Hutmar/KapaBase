@@ -374,7 +374,7 @@ def get_planning(
 
         max_due = range_row["max_due"] if (range_row and range_row["max_due"]) else None
 
-        if all_relevant_project_ids or effective_task_ids:
+        if True: #all_relevant_project_ids or effective_task_ids:
             plan_end_sql = """
                 SELECT MAX(pl.end_date) AS max_plan_end
                 FROM planning pl
@@ -592,9 +592,6 @@ def get_planning(
                 "week_hours":    week_hours,
             }
 
-        if end_week:
-            weeks = [wk for wk in weeks if wk <= end_week]
-
         plan_map: dict = {}
         for pl in plannings_raw:
             wk  = iso_week_key(pl["start_date"])
@@ -784,11 +781,16 @@ def get_planning(
 
             if diff <= 0 or (0 < diff < 15):
                 if pid in max_valid_future_date:
-                    base_date = max_valid_future_date[pid]
+                    ist_kw = _next_week_key(max_valid_future_date[pid])
+                elif pid in last_end_map_status:
+                    ist_kw = _next_week_key(last_end_map_status[pid])
+                elif proj["due_date"]:
+                    # Keine Planung → Liefertermin Ist = Liefertermin Soll
+                    iso = proj["due_date"].isocalendar()
+                    ist_kw = f"{iso[0]}-W{iso[1]:02d}"
                 else:
-                    base_date = last_end_map_status.get(pid, date.today())
-
-                ist_kw = _next_week_key(base_date)
+                    continue  # weder Planung noch Soll-Termin → kein Chip
+                    
                 if ist_kw not in ist_kw_map:
                     ist_kw_map[ist_kw] = []
                 ist_kw_map[ist_kw].append({
@@ -820,6 +822,9 @@ def get_planning(
                     capacity_by_staff[name]["week_hours"][wk] = h
                     capacity_totals[wk] = capacity_totals.get(wk, 0.0) + h
 
+        if end_week:
+            weeks = [wk for wk in weeks if wk <= end_week]
+            
         # ── "Inaktiv"-Zellen: Wochen, in denen der Mitarbeiter nicht an
         # ALLEN Arbeitstagen aktiv ist (aufgrund active_from/active_to) ──────
         inactive_map: dict = {}
@@ -1192,8 +1197,11 @@ def project_planning_status(variant_id: Optional[int] = None):
 
         if diff <= 0 or (diff > 0 and diff < 15):
             status_color = "lightgreen"
-            base_date_for_next_week = last_end_map.get(pid, date.today())
-            ist_kw_calculated = _next_week_key(base_date_for_next_week)
+            if pid in last_end_map:
+                ist_kw_calculated = _next_week_key(last_end_map[pid])
+            else:
+                # Keine Planung vorhanden → Liefertermin Ist = Liefertermin Soll
+                ist_kw_calculated = None  # unten greift final_ist_kw = due_kw
         else:
             status_color      = "red"
             ist_kw_calculated = None
@@ -1590,8 +1598,11 @@ def get_gantt(
 
         ist_kw = None
         if is_complete:
-            base_date_for_next_week = last_end_map.get(pid, date.today())
-            ist_kw = _next_week_key(base_date_for_next_week)
+            if pid in last_end_map:
+                ist_kw = _next_week_key(last_end_map[pid])
+            elif p["due_date"]:
+                iso = p["due_date"].isocalendar()
+                ist_kw = f"{iso[0]}-W{iso[1]:02d}"
 
         # Wenn "Vollständig geplant" aktiv ist: nur vollständig verplante
         # Projekte anzeigen. Sonst: alle Projekte, für die überhaupt
