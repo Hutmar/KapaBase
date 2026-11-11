@@ -6,10 +6,12 @@ Verwendet:
   spezifische Feiertage, die ergänzend zu den offiziellen österreichischen
   Feiertagen berücksichtigt werden sollen (z.B. Betriebsurlaub, Fenstertage).
 - Eigene DB-Abfragen für Abwesenheiten und Mitarbeiter-Stunden
+- Tabelle planned_absence: wiederkehrende, geplante Abwesenheitstage
+  (Mo–Fr) pro Mitarbeiter, die wie normale Abwesenheiten behandelt werden.
 """
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from decimal import Decimal  # Importiert das Decimal-Modul für präzise Berechnungen
 import json
 import logging
@@ -136,13 +138,81 @@ def week_sunday(year: int, week: int) -> date:
     """Sonntag der angegebenen ISO-Kalenderwoche."""
     return date.fromisocalendar(year, week, 7)
 
+# ── Geplante (wiederkehrende) Abwesenheitstage ─────────────────────────────────
+_DAY_CODE_TO_WEEKDAY = {"Mo": 0, "Di": 1, "Mi": 2, "Do": 3, "Fr": 4}
+
+
+def planned_absence_dates(cur, shortnames: List[str],
+                          start: date, end: date) -> Dict[str, Set[date]]:
+    """
+    Löst die wiederkehrenden geplanten Abwesenheitstage (Tabelle
+    planned_absence) in konkrete Kalendertage im Zeitraum [start, end] auf.
+    Rückgabe: {shortname: {date, date, ...}} (für alle übergebenen Kürzel,
+    ggf. mit leerem Set).
+
+    Feiertage werden hier bewusst NICHT herausgefiltert – das passiert, wie
+    bei normalen Abwesenheiten, an den Stellen, an denen Arbeitstage gezählt
+    werden.
+    """
+    result: Dict[str, Set[date]] = {s: set() for s in shortnames}
+    if not shortnames or end < start:
+        return result
+
+    cur.execute("""
+        SELECT shortname, absenceDay::text AS day_code
+        FROM planned_absence
+        WHERE shortname = ANY(%s)
+    """, (list(shortnames),))
+
+    weekdays_by_staff: Dict[str, Set[int]] = {}
+    for r in cur.fetchall():
+        wd = _DAY_CODE_TO_WEEKDAY.get(r["day_code"])
+        if wd is not None:
+            weekdays_by_staff.setdefault(r["shortname"], set()).add(wd)
+
+    if not weekdays_by_staff:
+        return result
+
+    d = start
+    while d <= end:
+        wd = d.weekday()
+        if wd < 5:
+            for sn, wds in weekdays_by_staff.items():
+                if wd in wds:
+                    result[sn].add(d)
+        d += timedelta(days=1)
+    return result
+
+
+def planned_absence_entries(cur, shortnames: List[str],
+                            start: date, end: date) -> List[dict]:
+    """
+    Wie planned_absence_dates(), liefert die Tage aber als "virtuelle"
+    Abwesenheits-Einträge im selben Format wie Zeilen der Tabelle absence
+    (shortname, absence_from, absence_to, absence_type) – je Tag ein Eintrag.
+    So können sie den bestehenden Abwesenheitslisten in der Planung einfach
+    angehängt werden und werden dort exakt wie normale Abwesenheiten
+    behandelt und dargestellt.
+    """
+    entries: List[dict] = []
+    for sn, days in planned_absence_dates(cur, shortnames, start, end).items():
+        for d in sorted(days):
+            entries.append({
+                "shortname":    sn,
+                "absence_from": d,
+                "absence_to":   d,
+                "absence_type": "Abwesend",
+            })
+    return entries
+
 # ── Kapazität gesamt ───────────────────────────────────────────────────────────  
 def calculate_total_capacity(start: date, end: date,
                              active_only: bool = True) -> Dict:
     """
     Berechnet die Gesamtkapazität aller (aktiven) Mitarbeiter im Zeitraum [start, end].
-    Zieht Feiertage (inkl. additional_holidays) und Abwesenheiten ab. Doppelbelegungen
-    (z.B. Urlaub am Feiertag) werden dank Set-Operationen nicht mehrfach abgezogen.
+    Zieht Feiertage (inkl. additional_holidays), Abwesenheiten und geplante
+    Abwesenheitstage ab. Doppelbelegungen (z.B. Urlaub am Feiertag) werden dank
+    Set-Operationen nicht mehrfach abgezogen.
     Zusätzlich werden Informationen über die Anzahl der Arbeitstage und Feiertage im Zeitraum zurückgegeben.
     """
     with get_cursor() as cur:
@@ -181,6 +251,10 @@ def calculate_total_capacity(start: date, end: date,
             while cur_d <= end_d:
                 absent_days[ab["shortname"]].add(cur_d)
                 cur_d += timedelta(days=1)
+
+        # Geplante (wiederkehrende) Abwesenheitstage ergänzen
+        for sn, days in planned_absence_dates(cur, shortnames, start, end).items():
+            absent_days[sn] |= days
 
         # Arbeitstage im Zeitraum ermitteln (working_days_in_range filtert Sa/So, AT-Feiertage
         # und additional_holidays bereits raus!)
@@ -228,6 +302,7 @@ def calculate_capacity_per_week(start: date, end: date,
     """
     Kapazität pro ISO-Kalenderwoche und Mitarbeiter.
     Optionaler Filter nach Rollen (z. B. ['Developer', 'Tester']).
+    Berücksichtigt Abwesenheiten sowie geplante Abwesenheitstage.
     Rückgabe: {
     'weeks': ['2025-W03', ...],
     'by_staff': { shortname: {'role': ..., 'hours_per_week': {week_key: float}} },
@@ -285,6 +360,10 @@ def calculate_capacity_per_week(start: date, end: date,
             while cur_d <= end_d:
                 absent_days[ab["shortname"]].add(cur_d)
                 cur_d += timedelta(days=1)
+
+        # Geplante (wiederkehrende) Abwesenheitstage ergänzen
+        for sn, days in planned_absence_dates(cur, shortnames, start, end).items():
+            absent_days[sn] |= days
 
         # Arbeitstage gruppiert nach KW (inkl. additional_holidays via get_austrian_holidays)
         years = set(range(start.year, end.year + 1))

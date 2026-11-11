@@ -17,6 +17,7 @@ from capacity import (
     iso_week_key,
     working_days_in_range,
     get_austrian_holidays,
+    planned_absence_entries,   # NEU: geplante (wiederkehrende) Abwesenheitstage
 )
 from routers.milestones import COLOR_SCHEMAS
 from routers.config import get_planning_buffer_percentage
@@ -444,6 +445,16 @@ def get_planning(
             absences = []
         absences_list = [dict(a) for a in absences]
 
+        # NEU: geplante (wiederkehrende) Abwesenheitstage wie normale
+        # Abwesenheiten behandeln. Sie werden NACH den echten Abwesenheiten
+        # angehängt, damit bei Überschneidung deren Typ (Urlaub, Krank, …)
+        # in der Anzeige Vorrang hat. Der Zeitraum reicht 52 Wochen über
+        # end_date hinaus, da die Matrix weiter unten durch "Liefertermin
+        # Ist" noch verlängert werden kann.
+        absences_list += planned_absence_entries(
+            cur, shortnames, start_date, end_date + timedelta(weeks=52)
+        )
+
         # WICHTIG: ORDER BY pl.start_date ASC, pl.planning_id ASC ergänzt.
         # Ohne explizites ORDER BY liefert PostgreSQL die Zeilen in
         # unspezifizierter (physischer) Reihenfolge zurück. Beim Anlegen
@@ -700,6 +711,10 @@ def get_planning(
                 AND absence_to >= %s AND absence_from <= %s
             """, (pstatus_staff, pstatus_min_d, pstatus_max_d))
             absences_status = [dict(a) for a in cur.fetchall()]
+            # NEU: geplante Abwesenheitstage berücksichtigen
+            absences_status += planned_absence_entries(
+                cur, pstatus_staff, pstatus_min_d, pstatus_max_d
+            )
         else:
             absences_status = []
 
@@ -880,6 +895,9 @@ def assign_planning(data: PlanningEntry):
             AND absence_to >= %s AND absence_from <= %s
         """, (data.staff, monday, friday))
         absences = [dict(r) for r in cur.fetchall()]
+
+        # NEU: geplante Abwesenheitstage berücksichtigen
+        absences += planned_absence_entries(cur, [data.staff], monday, friday)
 
         cur.execute("SELECT hours_per_day, active_from, active_to FROM staff WHERE shortname = %s", (data.staff,))
         staff_row = cur.fetchone()
@@ -1104,6 +1122,8 @@ def project_planning_status(variant_id: Optional[int] = None):
                 AND absence_to >= %s AND absence_from <= %s
             """, (pstaff, min_d, max_d))
             all_absences = [dict(a) for a in cur.fetchall()]
+            # NEU: geplante Abwesenheitstage berücksichtigen
+            all_absences += planned_absence_entries(cur, pstaff, min_d, max_d)
         else:
             all_absences = []
             min_d = date.today()
@@ -1327,6 +1347,8 @@ def task_planning_status(
             AND absence_to >= %s AND absence_from <= %s
         """, (pstaff, min_d, max_d))
         absences = [dict(a) for a in cur.fetchall()]
+        # NEU: geplante Abwesenheitstage berücksichtigen
+        absences += planned_absence_entries(cur, pstaff, min_d, max_d)
 
     at_hols = _build_at_hols(min_d, max_d)
 
@@ -1520,6 +1542,8 @@ def get_gantt(
                 AND absence_to >= %s AND absence_from <= %s
             """, (pstaff, min_d, max_d))
             all_absences = [dict(a) for a in cur.fetchall()]
+            # NEU: geplante Abwesenheitstage berücksichtigen
+            all_absences += planned_absence_entries(cur, pstaff, min_d, max_d)
         else:
             all_absences = []
             min_d = date.today()

@@ -1,5 +1,5 @@
 """
-routers/staff.py – CRUD-Endpunkte für Mitarbeiterverwaltung (Tabelle: staff, roles)
+routers/staff.py – CRUD-Endpunkte für Mitarbeiterverwaltung (Tabelle: staff, roles, planned_absence)
 """
 
 from fastapi import APIRouter, HTTPException
@@ -12,6 +12,9 @@ from psycopg2 import IntegrityError
 
 router = APIRouter()
 
+# Gültige Wochentage (Reihenfolge = Enum-Reihenfolge dayOfWeek in der DB)
+VALID_DAYS = ["Mo", "Di", "Mi", "Do", "Fr"]
+
 # ── Pydantic-Modelle ───────────────────────────────────────────────────────────
 
 class StaffCreate(BaseModel):
@@ -23,6 +26,7 @@ class StaffCreate(BaseModel):
     roles: List[str] = []                 # z. B. ['Developer', 'Tester']
     active_from: Optional[date] = None    # Aktiv ab (optional, NULL = unbegrenzt in die Vergangenheit)
     active_to: Optional[date] = None      # Aktiv bis (optional, NULL = unbegrenzt in die Zukunft)
+    planned_absence_days: Optional[List[str]] = None   # z. B. ['Fr']
 
 class StaffUpdate(BaseModel):
     hours_per_week: Optional[Decimal] = None
@@ -33,8 +37,52 @@ class StaffUpdate(BaseModel):
     force_delete_plannings: Optional[bool] = False
     active_from: Optional[date] = None        # Aktiv ab; wird immer gesetzt (auch null = entfernen)
     active_to: Optional[date] = None          # Aktiv bis; wird immer gesetzt (auch null = entfernen)
+    # None = unverändert lassen (z.B. Aktiv-Toggle in der Liste); Liste = neuer Soll-Stand
+    planned_absence_days: Optional[List[str]] = None
 
-# ── Hilfsfunktion ──────────────────────────────────────────────────────────────
+# ── Hilfsfunktionen ────────────────────────────────────────────────────────────
+
+def _normalize_planned_days(days: Optional[List[str]]) -> List[str]:
+    """Validiert die Wochentags-Kürzel und gibt sie dedupliziert in Wochenreihenfolge zurück."""
+    if not days:
+        return []
+    invalid = [d for d in days if d not in VALID_DAYS]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Ungültige Abwesenheitstage: {', '.join(invalid)} (erlaubt: {', '.join(VALID_DAYS)})"
+        )
+    wanted = set(days)
+    return [d for d in VALID_DAYS if d in wanted]
+
+
+def _sync_planned_absences(cur, shortname: str, target_days: List[str]):
+    """
+    Gleicht die Tabelle planned_absence für den Mitarbeiter mit der
+    gewünschten Liste ab: fehlende Tage werden eingefügt, nicht mehr
+    gewünschte gelöscht, unveränderte bleiben unberührt.
+    """
+    cur.execute(
+        "SELECT absenceDay::text AS day_code FROM planned_absence WHERE shortname = %s",
+        (shortname,)
+    )
+    current = {r["day_code"] for r in cur.fetchall()}
+    target = set(target_days)
+
+    for day in VALID_DAYS:
+        if day in target and day not in current:
+            cur.execute(
+                "INSERT INTO planned_absence (shortname, absenceDay) VALUES (%s, %s)",
+                (shortname, day)
+            )
+
+    to_delete = list(current - target)
+    if to_delete:
+        cur.execute(
+            "DELETE FROM planned_absence WHERE shortname = %s AND absenceDay::text = ANY(%s)",
+            (shortname, to_delete)
+        )
+
 
 def _sync_roles(cur, shortname: str, target_roles: List[str], force_delete_plannings: bool = False):
     """
@@ -162,9 +210,9 @@ def _cleanup_out_of_window_absences_and_plannings(cur, shortname: str,
 @router.get("/")
 def list_staff():
     """
-    Alle Mitarbeiter mit ihren Rollen zurückgeben, inklusive summierter Stunden
-    sowie Anzahl der Mitarbeiter (gesamt und je Rolle) für die Übersichtsboxen
-    auf der Mitarbeiterseite.
+    Alle Mitarbeiter mit ihren Rollen und geplanten Abwesenheitstagen
+    zurückgeben, inklusive summierter Stunden sowie Anzahl der Mitarbeiter
+    (gesamt und je Rolle) für die Übersichtsboxen auf der Mitarbeiterseite.
     """
     with get_cursor() as cur:
         cur.execute("""
@@ -174,7 +222,13 @@ def list_staff():
             COALESCE(
                 json_agg(r.role ORDER BY r.role)
                 FILTER (WHERE r.role IS NOT NULL), '[]'
-            ) AS roles
+            ) AS roles,
+            COALESCE(
+                (SELECT json_agg(pa.absenceDay::text ORDER BY pa.absenceDay)
+                 FROM planned_absence pa
+                 WHERE pa.shortname = s.shortname),
+                '[]'
+            ) AS planned_absence_days
             FROM staff s
             LEFT JOIN roles r ON r.shortname = s.shortname
             GROUP BY s.shortname, s.hours_per_week, s.hours_per_day,
@@ -226,6 +280,9 @@ def create_staff(data: StaffCreate):
     if data.active_from is not None or data.active_to is not None:
         is_active = True
 
+    # Geplante Abwesenheitstage (unabhängig von h/Woche)
+    planned_days = _normalize_planned_days(data.planned_absence_days)
+
     with get_cursor(commit=True) as cur:
         cur.execute("""
             INSERT INTO staff (shortname, hours_per_week, hours_per_day, remark, is_active,
@@ -235,6 +292,7 @@ def create_staff(data: StaffCreate):
               data.remark, is_active,
               data.active_from, data.active_to))
         _sync_roles(cur, data.shortname, data.roles)
+        _sync_planned_absences(cur, data.shortname, planned_days)
 
     return {"shortname": data.shortname}
 
@@ -290,6 +348,13 @@ def update_staff(shortname: str, data: StaffUpdate):
         else:
             new_hpd = existing["hours_per_day"]
 
+        # Geplante Abwesenheitstage (unabhängig von h/Woche): nur wenn das
+        # Frontend die Liste mitschickt, wird sie übernommen; None =
+        # unverändert lassen (z.B. Aktiv-Toggle in der Liste).
+        planned_target: Optional[List[str]] = None
+        if data.planned_absence_days is not None:
+            planned_target = _normalize_planned_days(data.planned_absence_days)
+
         cur.execute("""
             UPDATE staff
             SET hours_per_week = %s, hours_per_day = %s,
@@ -301,6 +366,9 @@ def update_staff(shortname: str, data: StaffUpdate):
 
         if data.roles is not None:
             _sync_roles(cur, shortname, data.roles, data.force_delete_plannings)
+
+        if planned_target is not None:
+            _sync_planned_absences(cur, shortname, planned_target)
 
         # Wenn ein aktiver Zeitraum (nachträglich) gesetzt wurde, müssen
         # Abwesenheiten und Planungen, die außerhalb dieses Zeitraums liegen,
@@ -329,5 +397,8 @@ def delete_staff(shortname: str):
         if cur.fetchone()["cnt"] > 0:
             raise HTTPException(status_code=409,
                                 detail="Mitarbeiter hat Abwesenheiten – bitte zuerst löschen")
+        # planned_absence hat ON DELETE RESTRICT → vor dem Löschen des
+        # Mitarbeiters entfernen
+        cur.execute("DELETE FROM planned_absence WHERE shortname = %s", (shortname,))
         cur.execute("DELETE FROM roles   WHERE shortname = %s", (shortname,))
         cur.execute("DELETE FROM staff   WHERE shortname = %s", (shortname,))

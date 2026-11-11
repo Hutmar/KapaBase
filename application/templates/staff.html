@@ -96,6 +96,36 @@
             <label>h/Woche *</label>
             <input id="f-hpw" type="number" min="1" max="60" placeholder="38.5" oninput="calcHpd()">
         </div>
+
+        <!-- Geplante Abwesenheitstage: immer sichtbar -->
+        <div class="form-row" id="planned-absence-row" style="align-items:flex-start">
+            <label style="padding-top:4px">Geplante Abwesenheitstage</label>
+            <div style="display:flex;flex-direction:column;gap:6px;flex:1">
+                <div id="planned-absence-box"
+                     style="display:flex;gap:14px;flex-wrap:wrap;border:1px solid var(--border);border-radius:var(--radius);padding:8px 12px;background:var(--bg3)">
+                    <label style="color:var(--text);display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="pa-Mo" class="pa-day-cb" value="Mo" style="width:auto"> Mo
+                    </label>
+                    <label style="color:var(--text);display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="pa-Di" class="pa-day-cb" value="Di" style="width:auto"> Di
+                    </label>
+                    <label style="color:var(--text);display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="pa-Mi" class="pa-day-cb" value="Mi" style="width:auto"> Mi
+                    </label>
+                    <label style="color:var(--text);display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="pa-Do" class="pa-day-cb" value="Do" style="width:auto"> Do
+                    </label>
+                    <label style="color:var(--text);display:flex;align-items:center;gap:6px">
+                        <input type="checkbox" id="pa-Fr" class="pa-day-cb" value="Fr" style="width:auto"> Fr
+                    </label>
+                </div>
+                <div class="text-dim" style="font-size:11px">
+                    Wiederkehrende, fixe Abwesenheitstage pro Woche. Sie werden in der Planung
+                    wie Abwesenheiten behandelt (Kapazität = anwesende Tage × h/Tag).
+                </div>
+            </div>
+        </div>
+
         <div class="form-row">
             <label>h/Tag</label>
             <div style="display:flex;gap:8px;align-items:center">
@@ -155,6 +185,8 @@
     let editingName = null;
     const hasEditRights = {{ 'true' if has_edit_rights else 'false' }};
 
+    const PLANNED_ABSENCE_DAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr'];
+
     async function loadStaff() {
         const response = await api('GET', '/api/staff/');
         const rows = response.staff_members;
@@ -203,6 +235,18 @@
         }
     }
 
+    // ── Geplante Abwesenheitstage ────────────────────────────────────────────
+    function setPlannedAbsenceDays(days) {
+        const set = new Set(days || []);
+        PLANNED_ABSENCE_DAYS.forEach(d => {
+            document.getElementById(`pa-${d}`).checked = set.has(d);
+        });
+    }
+
+    function getPlannedAbsenceDays() {
+        return PLANNED_ABSENCE_DAYS.filter(d => document.getElementById(`pa-${d}`).checked);
+    }
+
     document.getElementById('f-hpd').addEventListener('input', function() {
         // Wird nur bei tatsächlicher Nutzereingabe im Feld ausgelöst (nicht
         // beim programmatischen Vorbefüllen in openModal) – markiert, dass
@@ -238,12 +282,14 @@
             document.getElementById('role-dev').checked  = (s.roles||[]).includes('Developer');
             document.getElementById('role-test').checked = (s.roles||[]).includes('Tester');
             document.getElementById('role-other').checked= (s.roles||[]).includes('Other');
+            setPlannedAbsenceDays(s.planned_absence_days);
         } else {
             ['f-shortname','f-hpw','f-hpd','f-remark'].forEach(id=>document.getElementById(id).value='');
             document.getElementById('f-active-from').value = '';
             document.getElementById('f-active-to').value = '';
             document.getElementById('f-active').checked = true;
             ['role-dev','role-test','role-other'].forEach(id=>document.getElementById(id).checked=false);
+            setPlannedAbsenceDays([]);
         }
 
         modal.classList.add('open');
@@ -280,6 +326,7 @@
             active_to:      activeToVal || null,
             is_active:      document.getElementById('f-active').checked,
             roles,
+            planned_absence_days: getPlannedAbsenceDays(),
             force_delete_plannings: forceDelete
         };
 
@@ -301,7 +348,7 @@
             if (e.message && e.message.startsWith("PLANNING_CONFLICT:")) {
                 const promptMessage = e.message.replace("PLANNING_CONFLICT:", "");
                 if (confirm(promptMessage)) {
-                    // Wenn der Nutzer "Ja" (OK) klickt, rufen wir saveStaff erneut mit forceDelete = true auf[cite: 1, 3]
+                    // Wenn der Nutzer "Ja" (OK) klickt, rufen wir saveStaff erneut mit forceDelete = true auf
                     saveStaff(true);
                 }
             } else {

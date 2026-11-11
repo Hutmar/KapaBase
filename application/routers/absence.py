@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from datetime import date, timedelta
 from db import get_cursor
-from capacity import working_days_in_range
+from capacity import working_days_in_range, planned_absence_entries
 from routers.planning import _effective_hours_in_date_range, _build_at_hols
 from routers.config import get_current_fiscal_year_range
 
@@ -87,7 +87,8 @@ def _delete_plannings_reduced_to_zero(cur, shortname: str,
     Prüft alle Planungseinträge des Mitarbeiters, die sich zeitlich mit dem
     angegebenen Abwesenheitszeitraum überschneiden, und löscht davon NUR jene,
     deren effektive Stunden (unter Berücksichtigung ALLER Abwesenheiten des
-    Mitarbeiters) im eigenen Start-/Enddatum-Bereich der Planung auf 0 fallen.
+    Mitarbeiters inkl. seiner geplanten Abwesenheitstage) im eigenen
+    Start-/Enddatum-Bereich der Planung auf 0 fallen.
 
     D.h.:
     - Eine einzelne Wochenplanung wird nur gelöscht, wenn die Abwesenheit
@@ -132,6 +133,9 @@ def _delete_plannings_reduced_to_zero(cur, shortname: str,
           AND absence_from <= %s
     """, (shortname, range_start, range_end))
     absences = [dict(a) for a in cur.fetchall()]
+
+    # NEU: geplante (wiederkehrende) Abwesenheitstage des Mitarbeiters mitberücksichtigen
+    absences += planned_absence_entries(cur, [shortname], range_start, range_end)
 
     at_hols = _build_at_hols(range_start, range_end)
 
